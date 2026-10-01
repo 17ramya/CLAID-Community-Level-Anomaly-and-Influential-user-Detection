@@ -33,6 +33,12 @@ python tools/export_notebook.py            # re-export the notebook to explorato
 python exploratory/claid_workflow.py       # run the study pipeline (12 figures)
 ```
 
+## Live Demo Link
+
+```bash
+https://claidframework.vercel.app/
+```
+
 `python app.py` and `python run_claid.py` put `src/` on the import path by
 themselves, as does the smoke test. The module form `python -m claid.cli` is
 equivalent once `src` is on `PYTHONPATH` (`set PYTHONPATH=src` on Windows,
