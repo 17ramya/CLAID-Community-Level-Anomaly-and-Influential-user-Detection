@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Dashboard{% endblock %} · CLAID framework</title>
+  <meta name="description" content="CLAID - community detection, community-level anomaly detection and influential-user detection on social-interaction graphs.">
+  <meta name="color-scheme" content="light">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='img/favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
+          <g stroke="#fff" stroke-opacity=".6" stroke-width="3" stroke-linecap="round">
+            <line x1="32" y1="32" x2="16" y2="20"/><line x1="32" y1="32" x2="48" y2="19"/>
+            <line x1="32" y1="32" x2="17" y2="46"/><line x1="32" y1="32" x2="47" y2="45"/>
+          </g>
+          <g fill="#fff">
+            <circle cx="32" cy="32" r="7"/><circle cx="16" cy="20" r="4"/>
+            <circle cx="48" cy="19" r="4"/><circle cx="17" cy="46" r="4"/>
+            <circle cx="47" cy="45" r="4"/>
+          </g>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <strong>CLAID</strong>
+        <small>Community-Level Anomaly &amp; Influential-user Detection</small>
+      </span>
+    </a>
+
+    <nav class="site-nav" aria-label="Main">
+      <a href="{{ url_for('dashboard') }}"{% if active == 'dashboard' %} class="is-active" aria-current="page"{% endif %}>Dashboard</a>
+      {% if result is defined %}<a href="#module-1">Modules</a>{% endif %}
+      <a href="{{ url_for('about') }}"{% if active == 'about' %} class="is-active" aria-current="page"{% endif %}>About</a>
+      <a href="{{ url_for('api_runs') }}">API</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main" class="wrap" tabindex="-1">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <p>
+      CLAID framework &middot; implementations of the project report, chapter 4
+      (&sect;4.5 Louvain modularity, &sect;4.6 Isolation Forest,
+      &sect;4.7 betweenness centrality) and chapter 5
+      (&sect;5.2.5 precision, recall, F<sub>1</sub>).
+    </p>
+    <p class="muted">Every run stores its figures and JSON under <code>var/runs/&lt;run_id&gt;/</code>.</p>
+  </div>
+</footer>
+</body>
+</html>
+

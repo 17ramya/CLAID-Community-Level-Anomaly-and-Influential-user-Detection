@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} · {{ heading }}{% endblock %}
+{% block content %}
+
+<section class="hero hero-error">
+  <p class="eyebrow">{{ code }}</p>
+  <h1>{{ heading }}</h1>
+  <p class="lede">{{ message }}</p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Back to the dashboard</a>
+  </div>
+</section>
+
+{% endblock %}
+

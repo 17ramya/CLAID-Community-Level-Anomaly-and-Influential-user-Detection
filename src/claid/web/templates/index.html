@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% from "macros.html" import kpi %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <p class="eyebrow">Social-network analysis framework</p>
+  <h1>Community, anomaly and influencer detection in one pass</h1>
+  <p class="lede">
+    CLAID reads a social-interaction graph and answers three questions together:
+    <strong>which communities exist</strong> (&sect;4.5, Louvain modularity),
+    <strong>which nodes are anomalous</strong> (&sect;4.6, Isolation Forest) and
+    <strong>who influences each healthy community</strong> (&sect;4.7, betweenness
+    centrality). Everything is scored with precision, recall and F<sub>1</sub>
+    (&sect;5.2.5) and exported as JSON, CSV and figures.
+  </p>
+  <div class="hero-actions">
+    <a class="btn btn-primary" href="#run">Configure a run</a>
+    <a class="btn btn-ghost" href="{{ url_for('about') }}">How it works</a>
+  </div>
+  <div class="kpi-grid">
+    {{ kpi("Rows used", "{:,}".format(summary.rows), hint="after cleaning " ~ summary.dataset) }}
+    {{ kpi("Nodes", "{:,}".format(summary.nodes), hint="users in the graph", tone="teal") }}
+    {{ kpi("Edges", "{:,}".format(summary.edges), hint="interactions", tone="teal") }}
+    {{ kpi("Components", summary.components, hint="largest holds " ~ summary.largest_component ~ " nodes", tone="violet") }}
+    {{ kpi("Density", summary.density, hint="edges / possible edges") }}
+    {{ kpi("Average degree", summary.average_degree, hint="maximum " ~ summary.max_degree, tone="amber") }}
+  </div>
+</section>
+
+<div class="grid two">
+  <section class="card" id="run">
+    <header class="section-head">
+      <span class="section-index">1</span>
+      <div>
+        <h2>Configure a run</h2>
+        <p class="section-note">Defaults follow the report - change anything and run again.</p>
+      </div>
+    </header>
+
+    <form method="post" action="{{ url_for('analyze') }}" class="run-form">
+      <fieldset>
+        <legend>Scope (&sect;5.2.4)</legend>
+        <label>
+          Source node
+          <select name="source">
+            <option value="">auto - busiest node in the graph</option>
+            {% for choice in node_choices %}
+            <option value="{{ choice.node }}">{{ choice.node }} - weighted degree {{ choice.weighted_degree }}</option>
+            {% endfor %}
+          </select>
+          <span class="field-hint">The run reports the communities, anomalies and influencers around this user.</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Algorithms (&sect;4.5 - &sect;4.7)</legend>
+        <label>
+          Community detection method
+          <select name="community_method">
+            {% for method in methods %}<option value="{{ method }}">{{ method }}</option>{% endfor %}
+          </select>
+        </label>
+        <div class="field-row">
+          <label>
+            Louvain resolution
+            <input type="number" name="resolution" step="0.05" min="0.05" max="10" value="{{ defaults.resolution }}">
+            <span class="field-hint">higher = more, smaller communities</span>
+          </label>
+          <label>
+            Node contamination
+            <input type="number" name="contamination" step="0.005" min="0.001" max="0.49" value="{{ defaults.contamination }}">
+            <span class="field-hint">share of nodes expected to be anomalous</span>
+          </label>
+        </div>
+        <div class="field-row">
+          <label>
+            Community contamination
+            <input type="number" name="community_contamination" step="0.005" min="0.001" max="0.49" value="{{ defaults.contamination }}">
+            <span class="field-hint">same expectation for community features</span>
+          </label>
+          <label>
+            Influencers per community
+            <input type="number" name="top_influencers" min="1" max="50" value="{{ defaults.top_influencers }}">
+            <span class="field-hint">runners-up are listed in the report</span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="btn-row">
+        <button class="btn btn-primary" type="submit">Run CLAID</button>
+        <span class="hint">Takes a few seconds. Figures and JSON are stored in <code>var/runs/&lt;run_id&gt;/</code>.</span>
+      </div>
+    </form>
+  </section>
+
+  <section class="card">
+    <header class="section-head">
+      <span class="section-index">2</span>
+      <div>
+        <h2>Dataset and graph (&sect;4.3)</h2>
+        <p class="section-note">Rows that cannot form an edge are dropped before analysis.</p>
+      </div>
+    </header>
+    <table class="kv">
+      <tr><td>Dataset file</td><td><code>{{ summary.dataset }}</code></td></tr>
+      <tr><td>Columns</td><td class="wrap-cell muted">{{ summary.columns|join(', ') }}</td></tr>
+      <tr><td>Rows used</td><td>{{ "{:,}".format(summary.rows) }}</td></tr>
+      <tr><td>Dropped - missing endpoints</td><td>{{ summary.cleaning.get('rows_dropped_missing_endpoints', 0) }}</td></tr>
+      <tr><td>Dropped - self loops</td><td>{{ summary.cleaning.get('rows_dropped_self_loops', 0) }}</td></tr>
+      <tr><td>Nodes / edges</td><td>{{ "{:,}".format(summary.nodes) }} / {{ "{:,}".format(summary.edges) }}</td></tr>
+      <tr><td>Largest component</td><td>{{ summary.largest_component }} nodes</td></tr>
+      <tr><td>Average / maximum degree</td><td>{{ summary.average_degree }} / {{ summary.max_degree }}</td></tr>
+      <tr><td>Isolated nodes</td><td>{{ summary.isolated_nodes }}</td></tr>
+    </table>
+  </section>
+</div>
+
+<section class="card">
+  <header class="section-head">
+    <span class="section-index">3</span>
+    <div>
+      <h2>What each module reports</h2>
+      <p class="section-note">Four outputs from one run - all of them viewable and downloadable.</p>
+    </div>
+  </header>
+  <div class="module-grid">
+    <article>
+      <h3>Community detection <span class="badge badge-info">&sect;4.5</span></h3>
+      <p class="muted">Louvain modularity, benchmarked against greedy modularity, label
+        propagation and Girvan-Newman (&sect;5.2.1, figure 14).</p>
+    </article>
+    <article>
+      <h3>Anomaly detection <span class="badge badge-bad">&sect;4.6</span></h3>
+      <p class="muted">Isolation Forest over node and community features, compared with
+        the degree-centrality rule of figure 8 (&sect;5.2.2, figure 15).</p>
+    </article>
+    <article>
+      <h3>Influential users <span class="badge badge-warn">&sect;4.7</span></h3>
+      <p class="muted">Betweenness centrality inside every non-anomalous community,
+        compared with closeness and degree centrality (&sect;5.2.3, figure 16).</p>
+    </article>
+    <article>
+      <h3>Framework view <span class="badge badge-ok">&sect;5.2.4</span></h3>
+      <p class="muted">The communities interacting with the chosen source node, listed
+        together with their anomalies and their influencers.</p>
+    </article>
+  </div>
+</section>
+
+<section class="card">
+  <header class="section-head">
+    <span class="section-index">4</span>
+    <div>
+      <h2>Recent runs</h2>
+      <p class="section-note">Kept on disk under <code>var/runs/</code> - open one to revisit its figures and tables.</p>
+    </div>
+  </header>
+  {% if runs %}
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>run</th><th>generated (UTC)</th><th>method</th>
+          <th class="num">communities</th><th class="num">modularity</th>
+          <th class="num">anomalies</th><th class="num">influencers</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td><code>{{ run.run_id }}</code></td>
+          <td class="muted nowrap">{{ run.generated_at }}</td>
+          <td>{{ run.community_method }}</td>
+          <td class="num">{{ run.num_communities }}</td>
+          <td class="num">{{ run.modularity }}</td>
+          <td class="num">{{ run.n_anomalies }}</td>
+          <td class="num">{{ run.n_influencers }}</td>
+          <td><a href="{{ url_for('results', run_id=run.run_id) }}">open &rarr;</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="empty">No run yet - configure one above and CLAID will keep it here.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

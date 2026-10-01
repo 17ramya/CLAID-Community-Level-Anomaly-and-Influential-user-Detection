@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+{% from "macros.html" import kpi, bar_list, figure, section_head %}
+{% block title %}Run {{ result.run_id }}{% endblock %}
+{% block content %}
+
+<section class="hero compact">
+  <p class="eyebrow">Analysis run</p>
+  <h1><code>{{ result.run_id }}</code></h1>
+  <p class="hero-meta">
+    <code>{{ result.network.dataset }}</code> &middot; generated {{ result.generated_at }} &middot;
+    finished in {{ result.duration_seconds }}s &middot; method
+    <strong>{{ result.community.method }}</strong> &middot; source node
+    <strong>{{ result.focus.source if result.focus else 'n/a' }}</strong>
+  </p>
+  <p class="link-row">
+    <a class="pill" href="{{ url_for('api_claid') }}?source={{ result.focus.source if result.focus else '' }}">JSON API</a>
+    <a class="pill" href="{{ url_for('download', run_id=result.run_id, table='communities') }}">communities.csv</a>
+    <a class="pill" href="{{ url_for('download', run_id=result.run_id, table='anomalies') }}">anomalies.csv</a>
+    <a class="pill" href="{{ url_for('download', run_id=result.run_id, table='anomalous_communities') }}">anomalous_communities.csv</a>
+    <a class="pill" href="{{ url_for('download', run_id=result.run_id, table='influencers') }}">influencers.csv</a>
+    <a class="pill" href="{{ url_for('download', run_id=result.run_id, table='metrics') }}">metrics.csv</a>
+    {% if result.focus %}
+    <a class="pill" href="{{ url_for('download', run_id=result.run_id, table='focus') }}">focus.csv</a>
+    {% endif %}
+  </p>
+</section>
+
+<div class="kpi-grid">
+  {{ kpi("Nodes", "{:,}".format(result.network.nodes), hint="edges " ~ "{:,}".format(result.network.edges)) }}
+  {{ kpi("Communities", result.community.num_communities, hint="modularity " ~ result.community.modularity, tone="teal") }}
+  {{ kpi("Anomalous nodes", result.anomaly.n_anomalies, hint="contamination " ~ result.anomaly.contamination, tone="red") }}
+  {{ kpi("Anomalous communities", result.anomaly.anomalous_communities|length, hint="flagged by the forest", tone="amber") }}
+  {{ kpi("Community influencers", result.influence.per_community|length, hint="betweenness centrality", tone="violet") }}
+</div>
+
+{% if result.warnings %}
+<section class="card warn">
+  <h2>Warnings</h2>
+  <ul>{% for warning in result.warnings %}<li>{{ warning }}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+
+<section class="card">
+  {{ section_head("0", "At a glance",
+                  "What the run produced, how the community methods compare, and the shape of the graph.") }}
+  <div class="figure-grid">
+    {% if result.plots.overview %}
+      {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.overview),
+                "Modularity by community method, alongside the counts produced by the run",
+                "Left: modularity of each community method. Right: how much each module found.") }}
+    {% endif %}
+    {% if result.plots.distributions %}
+      {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.distributions),
+                "Degree distribution and community size distribution",
+                "Degree distribution (log scale) and the largest community sizes.") }}
+    {% endif %}
+  </div>
+</section>
+
+{% if result.focus %}
+<section class="card" id="module-1">
+  {{ section_head("1", "Framework view - source node " ~ result.focus.source,
+                  "Doc 5.2.4: the communities this user reaches, with their anomalies and influencers.") }}
+  <div class="grid two">
+    <div>
+      <table class="kv">
+        <tr><td>Source node</td><td><strong>{{ result.focus.source }}</strong></td></tr>
+        <tr><td>Its own community</td><td>#{{ result.focus.source_community }} ({{ result.focus.source_community_size }} nodes)</td></tr>
+        <tr><td>Degree</td><td>{{ result.focus.degree }}</td></tr>
+        <tr><td>Interacting communities</td><td>{{ result.focus.communities|length }}</td></tr>
+      </table>
+
+      <h3>Neighbours</h3>
+      <div class="table-scroll">
+        <table class="data small">
+          <thead><tr><th>node</th><th class="num">weight</th><th class="num">community</th></tr></thead>
+          <tbody>
+            {% for node in result.focus.neighbours %}
+            <tr>
+              <td>{{ node.node }}</td>
+              <td class="num">{{ node.weight }}</td>
+              <td class="num">#{{ node.community }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <h3>Communities reached from the source node</h3>
+      <div class="table-scroll">
+        <table class="data small">
+          <thead><tr><th class="num">community</th><th class="num">size</th><th>influential user</th><th class="num">anomalies</th></tr></thead>
+          <tbody>
+            {% for community in result.focus.communities[:15] %}
+            <tr>
+              <td class="num">#{{ community.id }}</td>
+              <td class="num">{{ community.size }}</td>
+              <td>
+                {{ community.influential_user if community.influential_user else '&mdash;'|safe }}
+                {% if community.excluded %}<span class="badge badge-warn">excluded</span>{% endif %}
+              </td>
+              <td class="num">{{ community.anomalies|length }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if result.plots.focus %}
+        {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.focus),
+                  "Source node, the communities it reaches, their anomalies and influencers",
+                  "Blue: the source node. Red: anomalous neighbours. Amber: community influencers.") }}
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+<section class="card" id="module-2">
+  {{ section_head("2", "Community detection with Louvain modularity",
+                  "Doc 4.5: the selected method, every benchmark method, and the communities it produced.") }}
+  <h3>Method comparison (doc figure 14)</h3>
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>method</th><th class="num">communities</th><th class="num">modularity</th>
+          <th class="num">ARI</th><th class="num">NMI</th><th class="num">precision</th>
+          <th class="num">recall</th><th class="num">F<sub>1</sub></th><th>note</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, entry in result.community.comparison.items() %}
+        <tr>
+          <td>
+            {% if name == result.community.method %}<strong>{{ name }}</strong>
+            <span class="badge badge-info">selected</span>{% else %}{{ name }}{% endif %}
+          </td>
+          {% if entry.error %}
+          <td colspan="8" class="muted">failed: {{ entry.error }}</td>
+          {% else %}
+          <td class="num">{{ entry.num_communities }}</td>
+          <td class="num">{{ entry.modularity }}</td>
+          <td class="num">{{ entry.ari }}</td>
+          <td class="num">{{ entry.nmi }}</td>
+          <td class="num">{{ entry.precision }}</td>
+          <td class="num">{{ entry.recall }}</td>
+          <td class="num"><strong>{{ entry.f1 }}</strong></td>
+          <td class="muted">
+            {% if entry.sampled_subgraph %}Girvan-Newman ran on a {{ entry.subgraph_nodes }}-node subgraph
+            {% else %}whole graph{% endif %}
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid two">
+    <div>
+      <h3>Largest communities</h3>
+      <div class="table-scroll">
+        <table class="data small">
+          <thead><tr><th class="num">community</th><th class="num">size</th><th class="num">internal edges</th><th class="num">density</th><th>top nodes</th></tr></thead>
+          <tbody>
+            {% for community in result.community.communities[:25] %}
+            <tr>
+              <td class="num">#{{ community.id }}</td>
+              <td class="num">{{ community.size }}</td>
+              <td class="num">{{ community.internal_edges }}</td>
+              <td class="num">{{ community.density }}</td>
+              <td class="muted wrap-cell">{{ community.top_nodes[:8]|join(', ') }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      {% if result.plots.communities %}
+        {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.communities),
+                  "Communities found with Louvain modularity, one colour per community",
+                  "Every colour is one community; node size grows with degree.") }}
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<section class="card" id="module-3">
+  {{ section_head("3", "Anomaly detection with the Isolation Forest",
+                  "Doc 4.6: node and community features scored together and compared with the degree rule of figure 8.") }}
+  <div class="grid two">
+    <div>
+      <table class="kv">
+        <tr><td>Node contamination</td><td>{{ result.anomaly.contamination }}</td></tr>
+        <tr><td>Community contamination</td><td>{{ result.anomaly.community_contamination }}</td></tr>
+        <tr><td>Features used</td><td class="muted wrap-cell">{{ result.anomaly.features|join(', ') }}</td></tr>
+        <tr><td>Anomalous nodes</td><td>{{ result.anomaly.n_anomalies }}</td></tr>
+        <tr><td>Anomalous communities</td><td class="muted wrap-cell">{{ result.anomaly.anomalous_communities|join(', ') }}</td></tr>
+        <tr>
+          <td>Reference rule (figure 8)</td>
+          <td class="muted wrap-cell">
+            {{ result.anomaly.reference_rule.name }} &rarr;
+            {{ result.anomaly.reference_rule.count }} nodes
+            (threshold {{ result.anomaly.reference_rule.threshold }})
+          </td>
+        </tr>
+      </table>
+      {% if result.plots.anomalies %}
+        {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.anomalies),
+                  "Anomalous nodes detected with the Isolation Forest",
+                  "Flagged nodes are drawn in red; the labelled ones are listed in the table.") }}
+      {% endif %}
+    </div>
+
+    <div>
+      <h3>Highest scoring nodes</h3>
+      <div class="table-scroll">
+        <table class="data small">
+          <thead>
+            <tr><th>node</th><th class="num">score</th><th class="num">anomaly score</th>
+                <th>anomalous</th><th class="num">community</th><th class="num">degree</th>
+                <th class="num">followers</th></tr>
+          </thead>
+          <tbody>
+            {% for row in result.anomaly.nodes[:20] %}
+            <tr class="{% if row.is_anomaly %}row-anomaly{% endif %}">
+              <td>{{ row.node }}</td>
+              <td class="num">{{ row.score }}</td>
+              <td class="num">{{ row.anomaly_score }}</td>
+              <td>{% if row.is_anomaly %}<span class="badge badge-bad">yes</span>{% else %}<span class="badge">no</span>{% endif %}</td>
+              <td class="num">#{{ row.community }}</td>
+              <td class="num">{{ row.degree }}</td>
+              <td class="num">{{ row.followers_mean }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Community scores</h3>
+      <div class="table-scroll">
+        <table class="data small">
+          <thead>
+            <tr><th class="num">community</th><th class="num">size</th><th class="num">score</th>
+                <th class="num">anomaly score</th><th>anomalous</th></tr>
+          </thead>
+          <tbody>
+            {% for row in result.anomaly.communities[:15] %}
+            <tr class="{% if row.is_anomaly %}row-anomaly{% endif %}">
+              <td class="num">#{{ row.community }}</td>
+              <td class="num">{{ row.size }}</td>
+              <td class="num">{{ row.score }}</td>
+              <td class="num">{{ row.anomaly_score }}</td>
+              <td>{% if row.is_anomaly %}<span class="badge badge-bad">yes</span>{% else %}<span class="badge">no</span>{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {% if result.plots.anomaly_scores %}
+    {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.anomaly_scores),
+              "Score distribution with the flagging threshold, and the highest scoring nodes",
+              "The red line is the lowest score still flagged; the bars on the right are the worst offenders.",
+              wide=True) }}
+  {% endif %}
+</section>
+
+<section class="card" id="module-4">
+  {{ section_head("4", "Influential users with betweenness centrality",
+                  "Doc 4.7: one leader per healthy community, then the graph-wide ranking.") }}
+  <p class="muted">
+    Betweenness centrality is computed inside every non-anomalous community.
+    {% if not result.influence.exact_betweenness %}
+    The graph-wide ranking uses a sampled estimate (<code>config.BETWEENNESS_SAMPLE_K</code>
+    sources) because this network is larger than the exact-search threshold; the
+    per-community scores are always exact.
+    {% endif %}
+  </p>
+
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr><th class="num">community</th><th class="num">size</th><th>influential user</th>
+            <th class="num">score</th><th>metric</th><th>runners-up</th></tr>
+      </thead>
+      <tbody>
+        {% for row in result.influence.per_community[:25] %}
+        <tr>
+          <td class="num">#{{ row.community }}</td>
+          <td class="num">{{ row.size }}</td>
+          <td><strong>{{ row.influential_user }}</strong></td>
+          <td class="num">{{ row.influential_score }}</td>
+          <td class="muted">{{ row.metric }}</td>
+          <td class="muted wrap-cell">
+            {% for user in row.top[1:5] %}{{ user.node }} ({{ user.score }}){% if not loop.last %}, {% endif %}{% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid two">
+    <div>
+      {% if result.plots.influencers %}
+        {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.influencers),
+                  "Influential users of each community highlighted in amber",
+                  "Amber nodes are the community leaders; the rest keep their community colour.") }}
+      {% endif %}
+    </div>
+    <div>
+      <h3>Global betweenness ranking</h3>
+      {{ bar_list(result.influence.top_users[:15], "node", "score", tone="violet", limit=15) }}
+
+      <h3>Communities excluded from influencer detection</h3>
+      {% if result.influence.excluded_communities %}
+      <div class="table-scroll">
+        <table class="data small">
+          <thead><tr><th class="num">community</th><th class="num">size</th><th>reason</th></tr></thead>
+          <tbody>
+            {% for row in result.influence.excluded_communities[:12] %}
+            <tr>
+              <td class="num">#{{ row.community }}</td>
+              <td class="num">{{ row.size }}</td>
+              <td class="muted">{{ row.reason }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="empty">No community was excluded by the Isolation Forest.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if result.plots.influencer_ranking %}
+    {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.influencer_ranking),
+              "Global betweenness-centrality ranking coloured by community",
+              "Betweenness of the top nodes, coloured by community - the bridges of the graph.",
+              wide=True) }}
+  {% endif %}
+</section>
+
+<section class="card" id="module-5">
+  {{ section_head("5", "Evaluation: precision, recall and F1",
+                  "Doc 5.2.5 - every score is measured against a named reference.") }}
+  <p class="muted">{{ result.metrics.note }}</p>
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr><th>module</th><th>method</th><th>reference</th>
+            <th class="num">precision</th><th class="num">recall</th>
+            <th class="num">F<sub>1</sub></th><th>note</th></tr>
+      </thead>
+      <tbody>
+        {% for row in result.metrics.rows %}
+        <tr>
+          <td>{{ row.module }}</td>
+          <td>{{ row.method }}</td>
+          <td class="muted">{{ row.reference }}</td>
+          <td class="num">{{ row.precision }}</td>
+          <td class="num">{{ row.recall }}</td>
+          <td class="num"><strong>{{ row.f1 }}</strong></td>
+          <td class="muted wrap-cell">{{ row.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if result.plots.metrics %}
+    {{ figure(url_for('run_figure', run_id=result.run_id, figure=result.plots.metrics),
+              "Precision, recall and F1 of every method per module",
+              "Scores are reference based, because the dataset ships no ground-truth labels.",
+              wide=True) }}
+  {% endif %}
+</section>
+
+<p class="link-row">
+  <a class="pill" href="{{ url_for('dashboard') }}">&larr; run the framework again</a>
+  <a class="pill" href="{{ url_for('api_runs') }}">stored runs (JSON)</a>
+  <a class="pill" href="{{ url_for('about') }}">what each module does</a>
+</p>
+
+{% endblock %}

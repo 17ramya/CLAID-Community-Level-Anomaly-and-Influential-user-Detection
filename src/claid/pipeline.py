@@ -271,18 +271,34 @@ def run_claid(make_plots=True, **overrides):
         node_scores, reference, per_community,
     )
 
+    # ---- one-glance counters (feed the dashboard figure and the web KPIs) -- #
+    counts = {
+        "nodes": graph.number_of_nodes(),
+        "edges": graph.number_of_edges(),
+        "communities": primary["num_communities"],
+        "modularity": round(modularity, 4),
+        "anomalous_nodes": len(anomalous_nodes),
+        "anomalous_communities": len(anomalous_communities),
+        "influencers": len(per_community),
+    }
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     run_dir = _run_directory(run_id)
     warnings = []
     plot_files = {}
     if make_plots:
         for label, factory in (
+            ("overview", lambda: plots.plot_overview(counts, comparison, run_dir)),
             ("communities", lambda: plots.plot_communities(graph, assignment, run_dir)),
+            ("distributions", lambda: plots.plot_distributions(graph, assignment, run_dir)),
             ("anomalies", lambda: plots.plot_anomalies(graph, assignment, anomalous_nodes, run_dir)),
-            ("influencers", lambda: plots.plot_influencers(graph, assignment, per_community, run_dir)),
+            ("anomaly_scores", lambda: plots.plot_anomaly_scores(
+                node_scores, anomalous_nodes, reference, run_dir)),
+            ("influencers", lambda: plots.plot_influencers(
+                graph, assignment, per_community, run_dir)),
+            ("influencer_ranking", lambda: plots.plot_influencer_ranking(
+                top_users, assignment, run_dir)),
             ("focus", lambda: plots.plot_focus(graph, assignment, focus["source"], focus, run_dir)),
             ("metrics", lambda: plots.plot_metrics(rows, run_dir)),
-            ("distributions", lambda: plots.plot_distributions(graph, assignment, run_dir)),
         ):
             try:
                 plot_files[label] = factory()

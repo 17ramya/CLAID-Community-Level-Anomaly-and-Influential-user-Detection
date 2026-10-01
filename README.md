@@ -1,30 +1,23 @@
 # CLAID — Community-Level Anomaly and Influential-user Detection
 
-Implementation of the framework described in the project report
-**“CLAID: A Unified Social Network Analysis Framework for Community-Level Anomaly
-and Influencer Detection”** (Ramya S, Rupesh A, Akilan K — Department of Computer
-Technology, Anna University MIT Campus, May 2024).
+CLAID is a social-network analysis framework that answers three questions in one
+pass over an interaction graph:
 
-CLAID joins three analyses that are usually run separately:
+1. **Which communities exist?** — Louvain modularity (report §4.5), benchmarked
+   against greedy modularity, label propagation and Girvan–Newman.
+2. **Which nodes and communities are anomalous?** — an Isolation Forest over node
+   and community features (§4.6), compared with the degree-centrality rule of
+   figure 8.
+3. **Who influences each healthy community?** — betweenness centrality inside every
+   non-anomalous community (§4.7), compared with closeness and degree centrality.
 
-| Module | Algorithm | Report section | Code |
-| --- | --- | --- | --- |
-| Community detection | Louvain modularity | §4.5 (fig. 7, pseudocode §4.5.1) | `src/claid/community.py` |
-| Anomaly detection | Isolation Forest | §4.6 (fig. 8, pseudocode §4.6.1) | `src/claid/anomaly.py` |
-| Influential users | Betweenness centrality | §4.7 (fig. 9, pseudocode §4.7.1) | `src/claid/influence.py` |
-| Framework view | source node + interacting communities | §5.2.4 (fig. 13) | `src/claid/pipeline.py` |
-| Evaluation | precision · recall · F1 | §5.2.5 (figs. 14–16) | `src/claid/evaluate.py` |
+Everything is scored with precision, recall and F<sub>1</sub> (§5.2.5) and exported as
+JSON, CSV and figures. The framework is served through a Flask web application
+(§4.4.6) whose charts are rendered by the framework itself — no charting library,
+no CDN, nothing loaded from a third party.
 
-The original work shipped as a single Jupyter notebook. In this repository the
-notebook is **converted to Python**, the three modules are **implemented as a
-reusable package**, and the whole framework is **served as a Flask website**
-(the web framework listed in §4.4.6 of the report).
-
-```
-CLAID_...ipynb ──convert──▶ notebook_to_py/*.py        (runnable notebook files)
-                            src/claid/*.py             (the framework, doc §4.5–4.7)
-                            app.py + webapp/           (Flask website, doc §4.4.6)
-```
+The original Jupyter notebook of the study is kept as plain Python under
+`exploratory/`, so the study can be read, diffed and re-run without Jupyter.
 
 ---
 
@@ -33,210 +26,174 @@ CLAID_...ipynb ──convert──▶ notebook_to_py/*.py        (runnable noteb
 ```bash
 python -m pip install -r requirements.txt
 
-# 1. the website
-python app.py                     # http://127.0.0.1:5000
-
-# 2. the framework from the command line
-set PYTHONPATH=src                # Windows:  set PYTHONPATH=src
-python -m claid.cli --source bestof
-
-# 3. the converted notebook
-python notebook_to_py/CLAID_notebook.py
-
-# 4. verify everything
-python tools/smoke_test.py
+python app.py                              # web application on http://127.0.0.1:5000
+python -m claid.cli --source bestof        # framework on the command line
+python tools/smoke_test.py                 # end-to-end checks, exits non-zero on failure
+python tools/export_notebook.py            # re-export the notebook to exploratory/
+python exploratory/claid_workflow.py       # run the study pipeline (12 figures)
 ```
 
-The dataset zip is extracted to `data/` automatically on first use
-(`data/Dataset(1).csv`, the 11-column layout documented in report §4.3).
+`python app.py` puts `src/` on the import path by itself. For the CLI and the smoke
+test, run them from the repository root with `src` on `PYTHONPATH`
+(`set PYTHONPATH=src` on Windows, `export PYTHONPATH=src` elsewhere).
 
-### The website
-
-| Page | What it shows |
-| --- | --- |
-| `/` | dataset/graph summary, framework parameters, run history |
-| `POST /analyze` | runs the pipeline, redirects to the results page |
-| `/results/<run_id>` | communities, anomalies, influential users, metrics + figures |
-| `/about` | module → report-section map, tools, dataset and runtime notes |
-| `/runs/<run_id>/<figure>.png` | the figures generated for a run |
-| `/download/<run_id>/<table>.csv` | `communities`, `anomalies`, `anomalous_communities`, `influencers`, `metrics`, `focus` |
-| `/api/claid?source=bestof&contamination=0.05` | the full result as JSON |
-| `/api/runs?limit=10` | stored runs as JSON |
-
-The parameters exposed by the form and the API are the ones the report defines:
-community method and Louvain resolution (§4.5), node and community contamination
-for the Isolation Forest (§4.6), how many influential users to keep per community
-(§4.7), and the source node used by the framework view (§5.2.4).
-
-Every run is stored under `var/runs/<run_id>/` as `result.json` plus six figures:
-
-| Figure | Report |
-| --- | --- |
-| `communities.png` | §5.2.1 clusters formed with Louvain modularity (fig. 10) |
-| `anomalies.png` | §5.2.2 anomalous nodes isolated by the Isolation Forest (fig. 11) |
-| `influencers.png` | §5.2.3 influential nodes from betweenness centrality (fig. 12) |
-| `focus.png` | §5.2.4 the source node with its interacting communities |
-| `metrics.png` | §5.2.5 precision / recall / F1 per method (figs. 14–16) |
-| `distributions.png` | degree distribution and community-size distribution |
-
+A dataset extraction and a `var/` directory are created on first use; both are
+git-ignored.
 
 ---
 
-## Converting and executing the notebook
+## The web application
 
-`tools/convert_notebook.py` reads the `.ipynb` and writes the Python files below
-into `notebook_to_py/`:
-
-| File | Content |
+| route | what it does |
 | --- | --- |
-| `CLAID_notebook_raw.py` | the notebook verbatim — only `%magics`, `!shell` escapes and bare `pip install` lines become comments so the file parses |
-| `CLAID_notebook.py` | the same code with the runtime fixes applied — **this file executes** |
-| `section_1_intro.py` … `section_7_calculate_centrality_measures.py` | one file per markdown section of the notebook |
-| `conversion_report.txt` | cell map, fixes applied per cell, `py_compile` results |
-| `output/fig_01.png …` | the figures produced when the script runs |
+| `GET /` | dashboard: dataset summary, KPI tiles, run form, recent runs |
+| `POST /analyze` | runs the framework with the submitted parameters, then redirects |
+| `GET /results/<run_id>` | the full report: at-a-glance figure, four module sections, metrics |
+| `GET /runs/<run_id>/<figure>.png` | one figure of a finished run |
+| `GET /download/<run_id>/<table>.csv` | CSV export: communities, anomalies, anomalous communities, influencers, metrics, focus |
+| `GET /api/claid` | JSON API, same parameters as the form (`source`, `community_method`, `resolution`, `contamination`, `community_contamination`, `top_influencers`) |
+| `GET /api/runs` | JSON list of stored runs |
+| `GET /about` | module → report mapping, tooling, dataset notes, configuration |
+
+Each run writes `result.json` and its figures into `var/runs/<run_id>/`, so the
+results page is a permanent, shareable report.
+
+---
+
+## Configuration and secrets
+
+**No key, token or password is stored in this repository.** Anything that depends
+on the machine or on a deployment is read from the environment, or from a
+git-ignored `.env` file:
+
+| variable | meaning | default |
+| --- | --- | --- |
+| `CLAID_SECRET_KEY` | signs session cookies | generated per process |
+| `CLAID_HOST` | interface to bind | `127.0.0.1` |
+| `CLAID_PORT` | port to bind | `5000` |
+| `CLAID_DEBUG` | Flask debugger, local use only | off |
 
 ```bash
-python tools/convert_notebook.py            # regenerate everything
-python notebook_to_py/CLAID_notebook.py     # 12 figures, ~1 minute
+cp .env.example .env
+python -c "import secrets; print(secrets.token_hex(32))"   # paste into CLAID_SECRET_KEY
 ```
 
-The notebook is not runnable as-is. The converter applies these documented
-changes (all listed in `conversion_report.txt`, so they can be audited against
-the original work):
+`src/claid/config.py` reads those variables (`load_environment()`, `secret_key()`,
+`web_host()`, `web_port()`, `debug_enabled()`); `.env` and `.env.*` are ignored by
+git while `.env.example` is committed. The application also sets a self-only
+content-security policy, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`
+and a 64 KB request-body cap, and it refuses to advertise the debugger on a public
+interface. `tools/smoke_test.py` scans the tree and fails if a credential-shaped
+assignment is ever committed.
 
-| Fix | Why |
-| --- | --- |
-| `%matplotlib inline`, `!pip install …`, bare `pip install Flask` → comments | IPython magics and shell escapes are not Python |
-| `plt.show()` → `claid_show()` | saves every figure to `notebook_to_py/output/` in a headless run |
-| `colors[counter]` → `colors[counter % len(colors)]` | the counter counts nodes, not colours → `IndexError` after a few nodes |
-| `for community, mod_value in …` → `for comm_set, mod_value in …` | the loop variable shadowed the imported `networkx.community` module, so the later `community.greedy_modularity_communities(G)` call crashed |
-| `"/content/Dataset.csv"` → the repository dataset | hard-coded Google Colab path |
-| `if __name__ == "__main__"` → `… and RUN_SCRAPER` | the `example.com` word-graph demo needs internet access and is unrelated to CLAID |
-| `import igraph as ig` wrapped in `try/except` | optional dependency (report §4.4.1); only the notebook's first cell used it |
-
-Two properties of the original notebook are worth knowing before reading its
-output: the `lst_b` community generator is consumed in an earlier cell, so the
-max-modularity cell prints *“No community found with maximum modularity.”*, and
-its final F1 table compares a ground-truth list with itself (1.000 for
-“Community Detection” and “Betweenness Centrality”). The package in `src/claid/`
-computes those numbers against the reference methods instead — see
-[Evaluation metrics](#evaluation-metrics-doc-525).
-
----
-
-## Project structure
+## Repository layout
 
 ```
-CLAID/
-├── CLAID_Community_Level_Anomaly_and_Influential_user_Detection.ipynb   notebook
-├── Dataset-20250808T064225Z-1-001.zip       Dataset.csv + Dataset(1).csv (§4.3)
-├── cip main_merged (2).pdf                  the project report ("the doc")
-├── app.py                                   Flask application (§4.4.6)
+.
+├── app.py                          Flask front end: routes, JSON API, CSV export
 ├── requirements.txt
+├── .env.example                    documented environment variables (no secrets)
+├── src/claid/                      the framework, importable as `claid`
+│   ├── config.py                   paths, algorithm defaults (§4.5–§4.7), environment
+│   ├── data.py                     dataset extraction, cleaning, graph construction
+│   ├── community.py                Louvain, greedy modularity, label propagation, Girvan–Newman
+│   ├── anomaly.py                  Isolation Forest on nodes and communities, degree rule
+│   ├── influence.py                betweenness / closeness / degree centrality per community
+│   ├── evaluate.py                 precision, recall, F1, ARI, NMI against a named reference
+│   ├── plots.py                    every figure, one shared theme and palette
+│   ├── pipeline.py                 runs the modules, writes var/runs/<run_id>/
+│   ├── cli.py                      python -m claid.cli
+│   └── web/                        templates, stylesheets and favicon served by Flask
+├── exploratory/                    the original notebook as Python (generated)
+│   ├── claid_workflow.py           the whole study as one executable script
+│   ├── claid_workflow_verbatim.py  verbatim transcription, kept for reference
+│   ├── parts/part_1…part_7_*.py    one file per notebook section, named after its algorithm
+│   ├── figures/                    PNGs written when the workflow runs (git-ignored)
+│   └── README.md                   generated: cell map, rewrites applied, file list
 ├── tools/
-│   ├── convert_notebook.py                  .ipynb  ->  .py
-│   └── smoke_test.py                        end-to-end check (24 assertions)
-├── notebook_to_py/                          generated Python + figures
-├── src/claid/
-│   ├── config.py        paths and algorithm defaults (§4.5-§4.7)
-│   ├── data.py          dataset loading, cleaning, graph, node features
-│   ├── community.py     module 1 - Louvain + 3 comparison methods
-│   ├── anomaly.py       module 2 - Isolation Forest + degree rule (fig. 8)
-│   ├── influence.py     module 3 - betweenness centrality per community
-│   ├── evaluate.py      precision / recall / F1, ARI, NMI
-│   ├── plots.py         the six figures
-│   ├── pipeline.py      runs the modules, saves var/runs/<run_id>/
-│   └── cli.py           python -m claid.cli
-├── webapp/
-│   ├── templates/       base - index - results - about - error
-│   └── static/css/style.css
-├── data/                extracted CSVs (created on first use, git-ignored)
-└── var/runs/<run_id>/   result.json + figures (created per run, git-ignored)
+│   ├── export_notebook.py          notebook  →  exploratory/*.py
+│   └── smoke_test.py               end-to-end checks: framework, routes, assets, secrets
+├── data/                           extracted dataset (git-ignored)
+└── var/runs/<run_id>/              result.json plus the figures of one run (git-ignored)
 ```
 
----
+## The three modules
 
-## How the framework works
+| module | algorithm | report | implementation |
+| --- | --- | --- | --- |
+| Community detection | Louvain modularity, compared with greedy modularity, label propagation, Girvan–Newman | §4.5, §5.2.1 (figure 14) | `src/claid/community.py` |
+| Anomaly detection | Isolation Forest over node and community features; degree-centrality reference rule | §4.6, §5.2.2 (figure 15) | `src/claid/anomaly.py` |
+| Influential users | betweenness centrality inside each non-anomalous community | §4.7, §5.2.3 (figure 16) | `src/claid/influence.py` |
+| Evaluation | precision, recall, F<sub>1</sub>, ARI, NMI | §5.2.5 | `src/claid/evaluate.py` |
+| Framework view | source node, its communities, their anomalies and influencers | §5.2.4 (figure 13) | `pipeline._focus()` |
+| Web application | Flask routes, JSON API, CSV export | §4.4.6 | `app.py`, `src/claid/web/` |
 
-### Module 1 — community detection (doc §4.5)
+Each run produces nine figures: an at-a-glance summary, the community structure, the
+degree and community-size distributions, the flagged anomalies, the anomaly-score
+distribution with its cut-off, the community influencers, the graph-wide betweenness
+ranking, the source-node view and the metric comparison. All of them share one theme
+and palette so a results page reads as a single report.
 
-Louvain modularity (`python-louvain`'s `best_partition`, exactly the algorithm the
-report selects) partitions the interaction graph and the resulting modularity is
-reported. Report figure 14 compares it with the other methods the notebook used,
-so all four run on every analysis:
+### Performance guards
 
-| Method | Implementation |
-| --- | --- |
-| Louvain Modularity | `community_louvain.best_partition` (§4.5) |
-| Greedy Modularity | `networkx.algorithms.community.greedy_modularity_communities` |
-| Label Propagation | `networkx.algorithms.community.label_propagation_communities` |
-| Edge Betweenness | `girvan_newman` (§4.5.1), capped — see the runtime notes |
+* Exact Brandes betweenness is O(n·m); above 800 nodes the **graph-wide** ranking
+  switches to a 200-source estimate. The §4.7 per-community scores stay exact.
+* Girvan–Newman is O(n·m²), so the §4.5 comparison runs it on a 90-node subgraph —
+  the table says so.
+* Network pictures draw at most 400 nodes of the largest component, trimmed to the
+  best-connected nodes, and the caption states the ratio.
 
-### Module 2 — anomaly detection (doc §4.6)
+## The study pipeline (`exploratory/`)
 
-An **Isolation Forest** (`sklearn.ensemble.IsolationForest`) is fitted twice, as
-the report describes:
+`exploratory/claid_workflow.py` is the original notebook as a single executable
+script; `exploratory/parts/` splits it into one file per notebook section, named
+after the algorithm each part covers:
 
-* **nodes** — 16 features per node: `posts`, `followers_mean/max`,
-  `likes_mean/sum`, `comments_mean/sum`, `sentiment_mean`, `properties_mean/std`
-  (from the 86-value `PROPERTIES` vector), `degree`, `weighted_degree`,
-  `degree_centrality`, `clustering`, `betweenness`, `pagerank`.
-  `anomaly_score` is the normalised average path length of §4.6.
-* **communities** — the same features averaged per community, so whole
-  communities are scored and the anomalous ones are listed.
+| part | notebook heading | covers |
+| --- | --- | --- |
+| `part_1_imports_and_graph_basics.py` | (opening cells) | libraries, karate-club graph basics |
+| `part_2_edge_betweenness.py` | Edge betweenness (Girvan–Newman) | divisive clustering |
+| `part_3_modularity_maximization.py` | Modularity maximization | greedy modularity |
+| `part_4_label_propagation.py` | Label propagation | asynchronous label propagation |
+| `part_5_louvain_communities.py` | Fast community unfolding (Louvain) | Louvain modularity |
+| `part_6_combined_analysis.py` | final | combined view, anomaly highlighting |
+| `part_7_centrality_measures.py` | Calculate centrality measures | degree, closeness, betweenness |
 
-The reference rule of figure 8 (`degree centrality > mean + 2σ`) is computed at
-the same time and used to score the forest.
+Regenerate everything with `python tools/export_notebook.py`; it rewrites the whole
+folder, re-checks each file with `py_compile` and writes
+`exploratory/README.md` (cell map, rewrites applied, file list).
 
-### Module 3 — influential users (doc §4.7)
+## Notebook → Python: what the exporter rewrites
 
-Following §4.7 the algorithm starts from the **non-anomalous** communities
-(anomalous ones are listed separately as excluded) and computes betweenness
-centrality *inside each community subgraph*, i.e. the breadth-first dependency
-accumulation of pseudocode §4.7.1. The highest scoring node is that community's
-influential user; closeness and degree centrality provide the comparison
-rankings of figure 16.
+The notebook was written for Colab and for interactive use, so `tools/export_notebook.py`
+applies a small, auditable set of rewrites (listed per cell in `exploratory/README.md`):
 
-### Evaluation metrics (doc §5.2.5)
+| original | exported | why |
+| --- | --- | --- |
+| `%matplotlib inline`, `!pip install …`, bare `pip install Flask` | comments | IPython magics and shell escapes are not Python |
+| `plt.show()` | `claid_show()` | saves each figure to `exploratory/figures/` in a headless run |
+| `colors[counter]` | `colors[counter % len(colors)]` | the counter counts nodes, not colours → `IndexError` after a few nodes |
+| `for community, mod_value in …` | `for comm_set, mod_value in …` | the loop variable shadowed the imported `networkx.community` module, so the later `community.greedy_modularity_communities(G)` call crashed |
+| `dataset_path = "/content/Dataset.csv"` | `dataset_path = str(DATASET_PATH)` | the Colab path does not exist outside Colab |
+| `import igraph as ig` | guarded import | igraph is optional and only needed by the scraper demo |
+| the `example.com` scraper demo | behind `RUN_SCRAPER = False` | it needs internet access |
 
-`src/claid/evaluate.py` provides weighted precision/recall/F1, ARI, NMI, and a
-top-k overlap score. The results table has one row per method per module.
+## Dataset
 
-> **These scores are reference-based.** The shipped dataset has no ground-truth
-> labels — the original notebook worked around this with a hand-written
-> `ground_truth_communities` list — so each row states the *reference method* it
-> is scored against: Louvain's partition (§4.5) for community detection, the
-> figure-8 degree rule for anomaly detection, and the top-k degree centrality
-> ranking for influential users. To score against real labels, pass them to
-> `evaluate.label_metrics(y_true, y_pred)`; nothing else in the framework
-> changes. Modularity and ARI/NMI are label-free and are shown next to them.
+`Dataset(1).csv` (5,029 rows) ships in the committed zip and is extracted into
+`data/` on first use: `SOURCE_SUBREDDIT`, `TARGET_SUBREDDIT`, `POST_ID`, `TIMESTAMP`,
+`ADDRESS`, `FOLLOWERS`, `PHONE NO`, `LIKES`, `COMMENTS`, `LINK_SENTIMENT` and an
+86-value `PROPERTIES` vector. The smaller 6-column `Dataset.csv` from the same zip is
+supported too (`python -m claid.cli --dataset Dataset.csv`).
 
----
+The graph built from it has 2,599 nodes, 3,779 edges and 242 components. Rows whose
+endpoints are missing (the literal `NaN`) and self loops are dropped, and the
+dashboard reports how many.
 
-## The shipped dataset (doc §4.3)
-
-| Property | Value |
-| --- | --- |
-| File | `data/Dataset(1).csv` (from `Dataset-20250808T064225Z-1-001.zip`) |
-| Rows | 5,029 posts |
-| Columns | `SOURCE_SUBREDDIT`, `TARGET_SUBREDDIT`, `POST_ID`, `TIMESTAMP`, `ADDRESS`, `FOLLOWERS`, `PHONE NO`, `LIKES`, `COMMENTS`, `LINK_SENTIMENT`, `PROPERTIES` (86 floats) |
-| Graph | 2,599 nodes, 3,779 edges, 242 components (largest 2,030 nodes), density 0.00112 |
-
-Rows whose endpoint is the literal `NaN` (present in the 6-column
-`Dataset.csv`) and self loops are dropped; the counts are reported on the
-dashboard and in every `result.json`. The alternative file is selectable with
-`--dataset Dataset.csv` or the `dataset` parameter of the pipeline.
-
-A default run (`--source bestof`, contamination 5 %) reports:
-
-```
-271 Louvain communities        modularity 0.6762
-130 anomalous nodes            14 anomalous communities (Isolation Forest)
-42  nodes by the degree rule   mean + 2 sigma (doc fig. 8)
-257 community leaders          bestof: degree 208, 23 interacting communities
-```
-
----
+**The dataset ships no ground-truth labels**, so the notebook's own F<sub>1</sub> = 1.000
+was self-referential — it compared a label set with itself. Here every metric row
+names the reference method it is scored against, and label-free measures (modularity,
+ARI, NMI) are reported next to precision, recall and F<sub>1</sub>.
 
 ## Verification
 
@@ -244,40 +201,19 @@ A default run (`--source bestof`, contamination 5 %) reports:
 python tools/smoke_test.py
 ```
 
-drives the framework and every web route and prints one line per check — 24
-assertions covering the pipeline (run id, graph, communities, modularity range,
-assignment coverage, anomalies, influencers, focus node, metrics table, figures)
-and the site (`/`, `POST /analyze`, `/results/<run_id>`, figure serving, CSV
-download, `/api/claid`, `/api/runs`, `/about`, unknown-run 404).
-
-`python tools/convert_notebook.py` syntax-checks all generated `.py` files with
-`py_compile` and prints the result in `conversion_report.txt`.
-
----
-
-## Runtime notes and limits
-
-* **Betweenness centrality** is exact below 800 nodes; above that the graph-wide
-  ranking uses a 200-source estimate because Brandes' algorithm is O(n·m). The
-  §4.7 per-community scores are always exact.
-* **Girvan-Newman** is O(n·m²), so the §4.5 comparison runs it on a 90-node
-  subgraph and says so in the table note (the other 2,509 nodes are singletons in
-  that partition, which is why its F1 is low).
-* **Figures** show the largest component trimmed to the 400 best-connected nodes.
-* **`igraph`** (§4.4.1) is optional — only the original notebook imported it.
-* **Gradle** (§4.4.7) is not needed by this implementation; `requirements.txt`
-  and `python app.py` cover install and run.
-* `python app.py` starts Flask's development server. For a real deployment put
-  it behind a WSGI server (`waitress-serve --port=8000 app:app` on Windows,
-  `gunicorn app:app` elsewhere) and a reverse proxy.
-
----
+runs the framework on the shipped dataset, exercises every route with Flask's test
+client, checks the assets, the security headers and the deployment posture, and scans
+the source tree for credential-shaped assignments. Latest result: **33 checks,
+0 failed** — 271 communities (modularity 0.6762), 130 anomalous nodes in 14 anomalous
+communities, 257 community influencers, nine figures per run, and no secrets in the
+repository.
 
 ## Credits
 
-The framework, the dataset and the report are the work of **Ramya S, Rupesh A and
-Akilan K** (Department of Computer Technology, Anna University MIT Campus,
-May 2024). This repository adds the Python conversion, the modular
-implementation of chapters 4–5, and the Flask web application.
+Framework: *CLAID — A Unified Social Network Analysis Framework for Community-Level
+Anomaly and Influencer Detection*, project report by Ramya S, Rupesh A and Akilan K,
+Department of Computer Technology, Anna University MIT Campus (May 2024).
 
-
+This repository exports the original Jupyter notebook as Python, re-implements the
+report's modules as the `claid` package, and serves both through the Flask
+application — chapter 4 (implementation) and chapter 5 (evaluation).

@@ -4,15 +4,21 @@ __pycache__/
 .venv/
 venv/
 
-# Extracted dataset (re-created automatically from the committed zip)
+# Extracted dataset (re-created from the committed zip on first run)
 data/
 
-# Framework output: JSON results and PNG figures per run
+# Framework output: one folder per run (result.json + figures)
 var/
 
-# Figures written by the converted notebook
-notebook_to_py/output/
+# Figures written when the exported study pipeline runs
+exploratory/figures/
+
+# Local configuration and credentials - never commit these
+.env
+.env.*
+!.env.example
 
 # Scratch / analysis output
 _analysis/
 *.log
+

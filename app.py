@@ -40,8 +40,36 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src
 
 from claid import config, data, pipeline  # noqa: E402
 
-app = Flask(__name__, template_folder="webapp/templates", static_folder="webapp/static")
-app.config["JSON_SORT_KEYS"] = False
+config.load_environment()  # .env / shell variables; nothing secret is stored here
+
+app = Flask(
+    __name__,
+    template_folder=config.TEMPLATES_DIR,
+    static_folder=config.STATIC_DIR,
+)
+app.config.update(
+    # No credential lives in the source tree: the key comes from CLAID_SECRET_KEY
+    # or is generated for this process (see .env.example).
+    SECRET_KEY=config.secret_key(),
+    JSON_SORT_KEYS=False,
+    MAX_CONTENT_LENGTH=config.MAX_REQUEST_BYTES,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+
+
+@app.after_request
+def _security_headers(response):
+    """Sensible defaults for a site that loads nothing from a third party."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    )
+    return response
 
 METHODS = list(config.COMMUNITY_COMPARISON_METHODS)
 NODE_CHOICES = 150
@@ -114,6 +142,7 @@ def dashboard():
             "top_influencers": config.TOP_INFLUENCERS,
         },
         runs=pipeline.list_runs(limit=8),
+        active="dashboard",
     )
 
 
@@ -128,7 +157,7 @@ def results(run_id):
     result = pipeline.load_run(run_id)
     if result is None:
         abort(404, "unknown run %s" % run_id)
-    return render_template("results.html", result=result)
+    return render_template("results.html", result=result, active="results")
 
 
 @app.route("/runs/<run_id>/<figure>")
@@ -229,21 +258,42 @@ def download(run_id, table):
 
 @app.route("/about")
 def about():
-    return render_template("about.html", methods=METHODS)
+    return render_template("about.html", methods=METHODS, active="about",
+                           secret_from_env=bool(os.environ.get("CLAID_SECRET_KEY")))
 
 
 @app.errorhandler(404)
 def not_found(error):
-    return render_template("error.html", message=getattr(error, "description", "not found")), 404
+    return render_template(
+        "error.html", code=404, heading="Not found",
+        message=getattr(error, "description", "that page does not exist"),
+    ), 404
+
+
+@app.errorhandler(500)
+def server_error(error):  # pragma: no cover - exercised only on a real failure
+    return render_template(
+        "error.html", code=500, heading="The run could not be completed",
+        message="Something went wrong while analysing the graph. "
+                "The server log holds the traceback.",
+    ), 500
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run the CLAID web application")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--host", default=config.web_host(),
+                        help="interface to bind (CLAID_HOST, default 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=config.web_port(),
+                        help="port to bind (CLAID_PORT, default 5000)")
+    parser.add_argument("--debug", action="store_true", default=config.debug_enabled(),
+                        help="Flask debugger (CLAID_DEBUG) - never on a public interface")
     args = parser.parse_args(argv)
     config.ensure_directories()
+    if args.debug and args.host not in ("127.0.0.1", "localhost"):
+        print("warning: the debugger is on while binding %s - do not expose this." % args.host)
+    if not os.environ.get("CLAID_SECRET_KEY"):
+        print("note: CLAID_SECRET_KEY is unset, so an ephemeral session key was "
+              "generated for this process (copy .env.example to .env to fix one).")
     print("CLAID web application running on http://%s:%d" % (args.host, args.port))
     app.run(host=args.host, port=args.port, debug=args.debug)
 

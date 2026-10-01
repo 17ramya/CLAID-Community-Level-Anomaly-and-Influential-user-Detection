@@ -1,0 +1,50 @@
+{# Reusable page furniture. Everything here renders on the server, so the site
+   needs no charting library and no external CDN. #}
+
+{% macro kpi(label, value, hint=None, tone='blue') %}
+<div class="kpi kpi-{{ tone }}">
+  <span class="kpi-label">{{ label }}</span>
+  <span class="kpi-value">{{ value }}</span>
+  {% if hint %}<span class="kpi-hint">{{ hint }}</span>{% endif %}
+</div>
+{% endmacro %}
+
+{# Horizontal bars drawn with CSS: a compact ranking without a chart library. #}
+{% macro bar_list(rows, label_key, value_key, tone='blue', limit=10) %}
+  {% set top = rows[:limit] %}
+  {% if top %}
+    {% set values = top | map(attribute=value_key) | list %}
+    {% set peak = values | max %}
+    <ul class="bar-list">
+      {% for row in top %}
+      <li>
+        <span class="bar-label">{{ row[label_key] }}</span>
+        <span class="bar-track">
+          <span class="bar-fill bar-{{ tone }}"
+                style="width: {{ (100 * row[value_key] / peak) | round(1) if peak else 0 }}%"></span>
+        </span>
+        <span class="bar-value">{{ row[value_key] }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">nothing to rank</p>
+  {% endif %}
+{% endmacro %}
+
+{% macro figure(url, alt, caption=None, wide=False) %}
+<figure class="figure-frame{% if wide %} wide{% endif %}">
+  <img src="{{ url }}" alt="{{ alt }}" loading="lazy">
+  {% if caption %}<figcaption>{{ caption }}</figcaption>{% endif %}
+</figure>
+{% endmacro %}
+
+{% macro section_head(index, title, note) %}
+<header class="section-head">
+  <span class="section-index">{{ index }}</span>
+  <div>
+    <h2>{{ title }}</h2>
+    {% if note %}<p class="section-note">{{ note }}</p>{% endif %}
+  </div>
+</header>
+{% endmacro %}

@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% from "macros.html" import kpi %}
+{% block title %}About{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <p class="eyebrow">About</p>
+  <h1>The CLAID framework</h1>
+  <p class="lede">
+    CLAID joins community detection, anomaly detection and influential-user
+    identification into a single workflow. Social networks are dense webs of
+    connections: not every participant is genuine, and inside every community a few
+    users shape the group's dynamics. CLAID finds the communities, isolates the
+    suspicious nodes and names the influencer of each healthy community.
+  </p>
+  <div class="kpi-grid">
+    {{ kpi("Module 1", "Communities", hint="Louvain modularity - doc 4.5", tone="blue") }}
+    {{ kpi("Module 2", "Anomalies", hint="Isolation Forest, community level - doc 4.6", tone="red") }}
+    {{ kpi("Module 3", "Influencers", hint="Betweenness centrality - doc 4.7", tone="amber") }}
+    {{ kpi("Evaluation", "P / R / F1", hint="reference based - doc 5.2.5", tone="violet") }}
+  </div>
+</section>
+
+<section class="card">
+  <h2>Module &rarr; project report mapping</h2>
+  <div class="table-scroll">
+    <table class="data">
+      <thead><tr><th>module</th><th>algorithm</th><th>report section</th><th>implementation</th></tr></thead>
+      <tbody>
+        <tr><td>Community detection</td><td>Louvain modularity</td>
+            <td>&sect;4.5 (figure 7, pseudocode &sect;4.5.1)</td>
+            <td><code>src/claid/community.py</code></td></tr>
+        <tr><td>Anomaly detection</td><td>Isolation Forest</td>
+            <td>&sect;4.6 (figure 8, pseudocode &sect;4.6.1)</td>
+            <td><code>src/claid/anomaly.py</code></td></tr>
+        <tr><td>Anomaly reference rule</td><td>degree centrality &gt; mean + 2&sigma;</td>
+            <td>&sect;4.6, figure 8</td>
+            <td><code>anomaly.degree_rule()</code></td></tr>
+        <tr><td>Influential users</td><td>Betweenness centrality</td>
+            <td>&sect;4.7 (figure 9, pseudocode &sect;4.7.1)</td>
+            <td><code>src/claid/influence.py</code></td></tr>
+        <tr><td>Framework view</td><td>source node + interacting communities</td>
+            <td>&sect;5.2.4 (figure 13)</td>
+            <td><code>pipeline._focus()</code></td></tr>
+        <tr><td>Evaluation</td><td>precision, recall, F<sub>1</sub></td>
+            <td>&sect;5.2.5 (figures 14&ndash;16)</td>
+            <td><code>src/claid/evaluate.py</code></td></tr>
+        <tr><td>Web application</td><td>Flask routes + JSON API</td>
+            <td>&sect;4.4.6</td>
+            <td><code>app.py</code>, <code>src/claid/web/</code></td></tr>
+        <tr><td>Study pipeline</td><td>the original notebook, as Python</td>
+            <td>chapter 5</td>
+            <td><code>exploratory/</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Tools required (&sect;4.4) and where they are used</h2>
+  <div class="table-scroll">
+    <table class="data">
+      <thead><tr><th>tool</th><th>report section</th><th>used for</th></tr></thead>
+      <tbody>
+        <tr><td>NetworkX</td><td>&sect;4.4.2</td><td>graph construction, centralities, community algorithms</td></tr>
+        <tr><td>python-louvain (<code>community</code>)</td><td>&sect;4.4.4</td><td>Louvain modularity (<code>best_partition</code>)</td></tr>
+        <tr><td>scikit-learn</td><td>&sect;4.4.5</td><td>Isolation Forest, precision / recall / F<sub>1</sub>, ARI, NMI</td></tr>
+        <tr><td>Matplotlib</td><td>&sect;4.4.3</td><td>every figure on a results page</td></tr>
+        <tr><td>Flask</td><td>&sect;4.4.6</td><td>this web application and its JSON API</td></tr>
+        <tr><td>igraph</td><td>&sect;4.4.1</td><td>installed for the original notebook; optional here</td></tr>
+        <tr><td>Gradle</td><td>&sect;4.4.7</td><td>not required by this implementation -
+            <code>requirements.txt</code> plus <code>python app.py</code> covers build and run</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Dataset (&sect;4.3)</h2>
+  <p class="muted">
+    <code>Dataset(1).csv</code> (5,029 rows) is the layout described in the report:
+    SOURCE_SUBREDDIT, TARGET_SUBREDDIT, POST_ID, TIMESTAMP, ADDRESS, FOLLOWERS,
+    PHONE NO, LIKES, COMMENTS, LINK_SENTIMENT and an 86 value PROPERTIES vector.
+    The smaller <code>Dataset.csv</code> in the same zip is supported too
+    (<code>--dataset</code>). Rows whose endpoints are missing (the literal
+    <code>NaN</code>) and self loops are dropped, and the dashboard reports how many.
+  </p>
+  <h3>How the figures are produced</h3>
+  <ul class="muted">
+    <li>Networks larger than 400 nodes are drawn as the largest component, trimmed to
+      the best-connected nodes so the picture stays readable; the figure caption says so.</li>
+    <li>Exact Brandes betweenness is O(n&middot;m), so the graph-wide ranking switches to a
+      sampled estimate above 800 nodes. The &sect;4.7 per-community scores stay exact.</li>
+    <li>Girvan-Newman is O(n&middot;m&sup2;), so the &sect;4.5 comparison runs it on a 90 node
+      subgraph, stated in the table note.</li>
+    <li>All figures share one theme and palette (<code>src/claid/plots.py</code>) with the
+      stylesheet, so a run reads as a single report.</li>
+  </ul>
+  <h3>How the evaluation is scored</h3>
+  <p class="muted">
+    The dataset ships no ground-truth labels, so the notebook's own F<sub>1</sub> = 1.000
+    was self-referential - it compared a label set with itself. Here every row names the
+    reference method it is scored against, and label-free measures (modularity, ARI, NMI)
+    are reported next to precision, recall and F<sub>1</sub>.
+  </p>
+</section>
+
+<section class="card">
+  <h2>How to run everything</h2>
+  <pre class="code">python tools/export_notebook.py            # notebook     ->  exploratory/*.py
+python exploratory/claid_workflow.py       # the study pipeline (12 figures)
+python -m claid.cli --source bestof        # framework from the command line
+python app.py                              # this web application
+python tools/smoke_test.py                 # end-to-end checks (framework + every route)</pre>
+  <p class="muted">
+    Run the last three from the repository root with <code>src</code> on
+    <code>PYTHONPATH</code> (<code>set PYTHONPATH=src</code> on Windows,
+    <code>export PYTHONPATH=src</code> elsewhere) - <code>python app.py</code> sets it by itself.
+  </p>
+</section>
+
+<section class="card">
+  <h2>Configuration and secrets</h2>
+  <p class="muted">
+    No key, token or password is stored in this repository. The application reads its
+    configuration from the environment, or from a git-ignored <code>.env</code> file
+    (<code>cp .env.example .env</code>):
+  </p>
+  <div class="table-scroll">
+    <table class="data small">
+      <thead><tr><th>variable</th><th>meaning</th><th>default</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>CLAID_SECRET_KEY</code></td>
+          <td>signs session cookies</td>
+          <td>random per process{% if not secret_from_env %} - <span class="badge badge-warn">currently unset</span>{% else %} - <span class="badge badge-ok">set</span>{% endif %}</td>
+        </tr>
+        <tr><td><code>CLAID_HOST</code></td><td>interface to bind</td><td>127.0.0.1</td></tr>
+        <tr><td><code>CLAID_PORT</code></td><td>port to bind</td><td>5000</td></tr>
+        <tr><td><code>CLAID_DEBUG</code></td><td>Flask debugger, local use only</td><td>off</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">
+    Generate a key with
+    <code>python -c "import secrets; print(secrets.token_hex(32))"</code>.
+    Responses carry a self-only content-security policy, <code>X-Frame-Options: DENY</code>
+    and <code>X-Content-Type-Options: nosniff</code>, and request bodies are capped at 64 KB.
+    Nothing is loaded from a third-party CDN - the charts on a results page are figures
+    rendered by the framework and the rankings use plain CSS bars.
+  </p>
+</section>
+
+<section class="card">
+  <h2>Repository layout</h2>
+  <pre class="code">app.py                     Flask front end (routes, JSON API, CSV export)
+src/claid/                 the framework: community, anomaly, influence, evaluate, plots
+src/claid/web/             templates and stylesheets served by Flask
+exploratory/               the original notebook exported as Python
+tools/                     notebook exporter and the end-to-end smoke test
+data/  var/                extracted dataset, and one folder per run</pre>
+</section>
+
+<section class="card">
+  <h2>Credits</h2>
+  <p class="muted">
+    Framework: <em>CLAID - A Unified Social Network Analysis Framework for
+    Community-Level Anomaly and Influencer Detection</em>, project report by
+    Ramya S, Rupesh A and Akilan K, Department of Computer Technology,
+    Anna University MIT Campus (May 2024).
+    This repository exports the original Jupyter notebook as Python, re-implements the
+    report's modules as the <code>claid</code> package, and serves both through this
+    Flask application, following chapter 4 (implementation) and chapter 5 (evaluation).
+  </p>
+</section>
+
+{% endblock %}
