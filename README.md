@@ -143,41 +143,6 @@ and palette so a results page reads as a single report.
 * Network pictures draw at most 400 nodes of the largest component, trimmed to the
   best-connected nodes, and the caption states the ratio.
 
-## The study pipeline (`exploratory/`)
-
-`exploratory/claid_workflow.py` is the original notebook as a single executable
-script; `exploratory/parts/` splits it into one file per notebook section, named
-after the algorithm each part covers:
-
-| part | notebook heading | covers |
-| --- | --- | --- |
-| `part_1_imports_and_graph_basics.py` | (opening cells) | libraries, karate-club graph basics |
-| `part_2_edge_betweenness.py` | Edge betweenness (Girvan–Newman) | divisive clustering |
-| `part_3_modularity_maximization.py` | Modularity maximization | greedy modularity |
-| `part_4_label_propagation.py` | Label propagation | asynchronous label propagation |
-| `part_5_louvain_communities.py` | Fast community unfolding (Louvain) | Louvain modularity |
-| `part_6_combined_analysis.py` | final | combined view, anomaly highlighting |
-| `part_7_centrality_measures.py` | Calculate centrality measures | degree, closeness, betweenness |
-
-Regenerate everything with `python tools/export_notebook.py`; it rewrites the whole
-folder, re-checks each file with `py_compile` and writes
-`exploratory/README.md` (cell map, rewrites applied, file list).
-
-## Notebook → Python: what the exporter rewrites
-
-The notebook was written for Colab and for interactive use, so `tools/export_notebook.py`
-applies a small, auditable set of rewrites (listed per cell in `exploratory/README.md`):
-
-| original | exported | why |
-| --- | --- | --- |
-| `%matplotlib inline`, `!pip install …`, bare `pip install Flask` | comments | IPython magics and shell escapes are not Python |
-| `plt.show()` | `claid_show()` | saves each figure to `exploratory/figures/` in a headless run |
-| `colors[counter]` | `colors[counter % len(colors)]` | the counter counts nodes, not colours → `IndexError` after a few nodes |
-| `for community, mod_value in …` | `for comm_set, mod_value in …` | the loop variable shadowed the imported `networkx.community` module, so the later `community.greedy_modularity_communities(G)` call crashed |
-| `dataset_path = "/content/Dataset.csv"` | `dataset_path = str(DATASET_PATH)` | the Colab path does not exist outside Colab |
-| `import igraph as ig` | guarded import | igraph is optional and only needed by the scraper demo |
-| the `example.com` scraper demo | behind `RUN_SCRAPER = False` | it needs internet access |
-
 ## Dataset
 
 `Dataset(1).csv` (5,029 rows) ships in the committed zip and is extracted into
@@ -190,10 +155,6 @@ The graph built from it has 2,599 nodes, 3,779 edges and 242 components. Rows wh
 endpoints are missing (the literal `NaN`) and self loops are dropped, and the
 dashboard reports how many.
 
-**The dataset ships no ground-truth labels**, so the notebook's own F<sub>1</sub> = 1.000
-was self-referential — it compared a label set with itself. Here every metric row
-names the reference method it is scored against, and label-free measures (modularity,
-ARI, NMI) are reported next to precision, recall and F<sub>1</sub>.
 
 ## Verification
 
@@ -214,6 +175,3 @@ Framework: *CLAID — A Unified Social Network Analysis Framework for Community-
 Anomaly and Influencer Detection*, project report by Ramya S, Rupesh A and Akilan K,
 Department of Computer Technology, Anna University MIT Campus (May 2024).
 
-This repository exports the original Jupyter notebook as Python, re-implements the
-report's modules as the `claid` package, and serves both through the Flask
-application — chapter 4 (implementation) and chapter 5 (evaluation).
