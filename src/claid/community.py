@@ -62,8 +62,15 @@ def greedy_modularity(graph, resolution=None, seed=None):
 
 
 def label_propagation(graph, resolution=None, seed=None):
-    """Asynchronous label propagation (notebook markdown section 4)."""
-    groups = list(nx_community.label_propagation_communities(graph, weight="weight"))
+    """Asynchronous label propagation (notebook markdown section 4).
+
+    NetworkX's ``label_propagation_communities`` is the unweighted,
+    semi-synchronous variant the notebook used: it accepts neither ``weight``
+    nor ``seed``.  Passing ``weight`` raised ``TypeError``, which the per-method
+    guard in the pipeline swallowed, so this comparison method silently
+    disappeared from every run - it is deliberately not passed here.
+    """
+    groups = list(nx_community.label_propagation_communities(graph))
     return _result("Label Propagation", _groups_to_assignment(groups))
 
 

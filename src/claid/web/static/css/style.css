@@ -273,3 +273,38 @@ details.disclosure[open] summary { margin-bottom: 10px; }
   .figure-frame img { border: 0; }
   .kpi { box-shadow: none; }
 }
+
+/* --- run progress --------------------------------------------------------- */
+/* The form posts to /analyze and the browser waits ~30 seconds for the run, so
+   js/app.js swaps the button label and the hint below explains what is
+   happening in the meantime - the request itself cannot stream progress. */
+.btn[aria-busy="true"] { cursor: progress; opacity: .82; }
+
+.hint.is-running {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 52ch;
+  color: var(--ink-700);
+}
+
+.hint.is-running::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 2px solid rgba(37, 99, 235, .28);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: claid-spin .8s linear infinite;
+}
+
+@keyframes claid-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hint.is-running::before { animation: none; border-top-color: rgba(37, 99, 235, .28); }
+}
+

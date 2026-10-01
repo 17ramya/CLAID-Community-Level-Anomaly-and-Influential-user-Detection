@@ -109,13 +109,17 @@
   <h2>How to run everything</h2>
   <pre class="code">python tools/export_notebook.py            # notebook     ->  exploratory/*.py
 python exploratory/claid_workflow.py       # the study pipeline (12 figures)
-python -m claid.cli --source bestof        # framework from the command line
+python run_claid.py --source bestof        # framework from the command line
 python app.py                              # this web application
 python tools/smoke_test.py                 # end-to-end checks (framework + every route)</pre>
   <p class="muted">
-    Run the last three from the repository root with <code>src</code> on
+    <code>run_claid.py</code>, <code>app.py</code> and the smoke test put
+    <code>src</code> on the import path themselves, so they work in a fresh clone.
+    Only the module form <code>python -m claid.cli</code> needs
     <code>PYTHONPATH</code> (<code>set PYTHONPATH=src</code> on Windows,
-    <code>export PYTHONPATH=src</code> elsewhere) - <code>python app.py</code> sets it by itself.
+    <code>export PYTHONPATH=src</code> elsewhere). A full run takes about half a
+    minute and prints every stage as it goes; a repeat run in the same process is
+    served from the cache.
   </p>
 </section>
 

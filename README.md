@@ -27,15 +27,16 @@ The original Jupyter notebook of the study is kept as plain Python under
 python -m pip install -r requirements.txt
 
 python app.py                              # web application on http://127.0.0.1:5000
-python -m claid.cli --source bestof        # framework on the command line
+python run_claid.py --source bestof        # command line, prints its progress
 python tools/smoke_test.py                 # end-to-end checks, exits non-zero on failure
 python tools/export_notebook.py            # re-export the notebook to exploratory/
 python exploratory/claid_workflow.py       # run the study pipeline (12 figures)
 ```
 
-`python app.py` puts `src/` on the import path by itself. For the CLI and the smoke
-test, run them from the repository root with `src` on `PYTHONPATH`
-(`set PYTHONPATH=src` on Windows, `export PYTHONPATH=src` elsewhere).
+`python app.py` and `python run_claid.py` put `src/` on the import path by
+themselves, as does the smoke test. The module form `python -m claid.cli` is
+equivalent once `src` is on `PYTHONPATH` (`set PYTHONPATH=src` on Windows,
+`export PYTHONPATH=src` elsewhere).
 
 A dataset extraction and a `var/` directory are created on first use; both are
 git-ignored.
@@ -91,6 +92,7 @@ assignment is ever committed.
 ```
 .
 ├── app.py                          Flask front end: routes, JSON API, CSV export
+├── run_claid.py                    zero-setup CLI entry point (puts src/ on the path)
 ├── requirements.txt
 ├── .env.example                    documented environment variables (no secrets)
 ├── src/claid/                      the framework, importable as `claid`
@@ -102,8 +104,9 @@ assignment is ever committed.
 │   ├── evaluate.py                 precision, recall, F1, ARI, NMI against a named reference
 │   ├── plots.py                    every figure, one shared theme and palette
 │   ├── pipeline.py                 runs the modules, writes var/runs/<run_id>/
-│   ├── cli.py                      python -m claid.cli
-│   └── web/                        templates, stylesheets and favicon served by Flask
+│   ├── progress.py                 stage-by-stage reporting while a run is working
+│   ├── cli.py                      argument parsing for run_claid.py / -m claid.cli
+│   └── web/                        templates, stylesheets, JS and favicon served by Flask
 ├── exploratory/                    the original notebook as Python (generated)
 │   ├── claid_workflow.py           the whole study as one executable script
 │   ├── claid_workflow_verbatim.py  verbatim transcription, kept for reference
@@ -143,13 +146,38 @@ and palette so a results page reads as a single report.
 * Network pictures draw at most 400 nodes of the largest component, trimmed to the
   best-connected nodes, and the caption states the ratio.
 
+### Runtime and stage progress
+
+A first run takes roughly 15–30 seconds on the shipped dataset — the spread is
+machine load, and writing the figures into a synced OneDrive folder is the slowest
+part: greedy modularity (~5 s), closeness centrality (~4 s), the graph-wide
+betweenness estimate (~2 s), the Isolation Forest fits (~1 s) and nine figures
+(~6 s). The pipeline therefore reports every stage with its duration, so a run never
+looks hung:
+
+```
+[claid]   ...  module 1 - community detection (Louvain Modularity)
+[claid]   0.5s  module 1 done: 271 communities, modularity 0.6762
+[claid]   ...  comparison - Greedy Modularity
+[claid]   5.2s  comparison - Greedy Modularity done
+```
+
+`python app.py` mirrors the same lines into the Flask log, the run form says the
+run takes about half a minute and spins while the POST is in flight, and
+`--quiet` keeps only the headline line.
+
+Every deterministic stage — the graph and its features, the §4.5 comparison, the
+top-k influence baselines and the Isolation Forest fits — is memoised per dataset
+inside the running process, so **a repeat run finishes in about a second** instead of
+recomputing all of it; `pipeline.cache_stats()` reports what is already cached.
+
 ## Dataset
 
 `Dataset(1).csv` (5,029 rows) ships in the committed zip and is extracted into
 `data/` on first use: `SOURCE_SUBREDDIT`, `TARGET_SUBREDDIT`, `POST_ID`, `TIMESTAMP`,
 `ADDRESS`, `FOLLOWERS`, `PHONE NO`, `LIKES`, `COMMENTS`, `LINK_SENTIMENT` and an
 86-value `PROPERTIES` vector. The smaller 6-column `Dataset.csv` from the same zip is
-supported too (`python -m claid.cli --dataset Dataset.csv`).
+supported too (`python run_claid.py --dataset Dataset.csv`).
 
 The graph built from it has 2,599 nodes, 3,779 edges and 242 components. Rows whose
 endpoints are missing (the literal `NaN`) and self loops are dropped, and the
@@ -162,12 +190,13 @@ dashboard reports how many.
 python tools/smoke_test.py
 ```
 
-runs the framework on the shipped dataset, exercises every route with Flask's test
-client, checks the assets, the security headers and the deployment posture, and scans
-the source tree for credential-shaped assignments. Latest result: **33 checks,
+runs the framework twice on the shipped dataset, exercises every route with Flask's
+test client, checks the assets, the security headers and the deployment posture, and
+scans the source tree for credential-shaped assignments. Latest result: **39 checks,
 0 failed** — 271 communities (modularity 0.6762), 130 anomalous nodes in 14 anomalous
-communities, 257 community influencers, nine figures per run, and no secrets in the
-repository.
+communities, 257 community influencers, all four §4.5 methods returning a partition
+(label propagation included), nine figures per run, a repeat run served from the
+in-process cache in about half a second, and no secrets in the repository.
 
 ## Credits
 

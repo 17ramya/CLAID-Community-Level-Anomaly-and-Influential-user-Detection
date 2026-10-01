@@ -89,7 +89,10 @@
 
       <div class="btn-row">
         <button class="btn btn-primary" type="submit">Run CLAID</button>
-        <span class="hint">Takes a few seconds. Figures and JSON are stored in <code>var/runs/&lt;run_id&gt;/</code>.</span>
+        <span class="hint" id="run-status">Takes about half a minute: greedy modularity,
+          closeness centrality and the Isolation Forest dominate the run. Progress is
+          printed in the terminal that serves the app, and the nine figures are stored in
+          <code>var/runs/&lt;run_id&gt;/</code>.</span>
       </div>
     </form>
   </section>

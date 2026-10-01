@@ -1,12 +1,22 @@
 """Command line entry point for the CLAID framework.
 
-    python -m claid.cli --source bestof
-    python -m claid.cli --method "Label Propagation" --contamination 0.08 --json run.json
+    python run_claid.py --source bestof
+    python run_claid.py --method "Label Propagation" --contamination 0.08 --json run.json
+
+``run_claid.py`` in the repository root is a thin wrapper that puts ``src`` on
+``PYTHONPATH``, so the commands above work in a fresh clone.  The module form
+``python -m claid.cli`` behaves identically once ``src`` is installed or on
+``PYTHONPATH``.
+
+A full run takes roughly twenty to thirty seconds (greedy modularity,
+betweenness/closeness centrality and the Isolation Forest dominate) and prints
+its progress as it goes; ``--quiet`` keeps only the headline line.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from . import config, pipeline
@@ -14,7 +24,7 @@ from . import config, pipeline
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog="python -m claid.cli",
+        prog="run_claid.py",
         description="Run the CLAID framework (doc 4.5-4.7) on the shipped dataset.",
     )
     parser.add_argument("--source", help="source node (subreddit) to focus on")
@@ -37,7 +47,8 @@ def build_parser():
     parser.add_argument("--dataset", help="CSV to analyse (default: doc 4.3 dataset)")
     parser.add_argument("--no-plots", action="store_true", help="skip figure generation")
     parser.add_argument("--json", dest="json_path", help="also dump the result JSON here")
-    parser.add_argument("--quiet", action="store_true", help="only print the headline numbers")
+    parser.add_argument("--quiet", action="store_true",
+                        help="only print the headline numbers (no stage progress)")
     return parser
 
 
@@ -113,6 +124,8 @@ def format_report(result):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.quiet:
+        os.environ["CLAID_QUIET"] = "1"  # stage progress off, headline kept
     result = pipeline.run_claid(
         source=args.source,
         community_method=args.method,

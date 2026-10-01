@@ -23,6 +23,7 @@ import csv
 import io
 import os
 import sys
+import time
 
 from flask import (
     Flask,
@@ -38,7 +39,7 @@ from flask import (
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
 
-from claid import config, data, pipeline  # noqa: E402
+from claid import config, data, pipeline, progress  # noqa: E402
 
 config.load_environment()  # .env / shell variables; nothing secret is stored here
 
@@ -56,6 +57,10 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
 )
+
+# The pipeline prints its stage timings while it works; mirror them into the
+# Flask log so the terminal that serves the site shows what a run is doing.
+progress.add_sink(app.logger.info)
 
 
 @app.after_request
@@ -148,7 +153,17 @@ def dashboard():
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    result = pipeline.run_claid(**_params_from(request.form))
+    """Run the framework and redirect to the stored results.
+
+    A full run takes about half a minute, so the pipeline logs each stage (and
+    the two lines below bracket the request in the server log).
+    """
+    params = _params_from(request.form)
+    started = time.time()
+    app.logger.info("POST /analyze %s", params)
+    result = pipeline.run_claid(**params)
+    app.logger.info("POST /analyze -> /results/%s in %.1fs",
+                    result["run_id"], time.time() - started)
     return redirect(url_for("results", run_id=result["run_id"]))
 
 

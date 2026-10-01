@@ -26,7 +26,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 
-from . import anomaly, community, config, data, evaluate, influence, plots
+from . import anomaly, community, config, data, evaluate, influence, plots, progress
 
 DEFAULT_PARAMS = {
     "source": None,
@@ -39,6 +39,110 @@ DEFAULT_PARAMS = {
 }
 
 _CACHE = {}
+
+
+def cache_stats(dataset=None):
+    """What is already memoised for a dataset (used by the smoke test).
+
+    The graph, its features, the community comparison, the top-k influence
+    baselines and the Isolation Forest fits are deterministic, so each of them
+    is computed once per process and reused by every following run.
+    """
+    entry = _CACHE.get(str(data.dataset_path(dataset)), {})
+    return {
+        "graph": "graph" in entry,
+        "features": "features" in entry,
+        "comparison": sorted(entry.get("comparison", {})),
+        "baselines": sorted(entry.get("baselines", {})),
+        "forest": sorted("%s@%s" % (key[0], key[2] or key[1]) for key in entry.get("forest", {})),
+    }
+
+
+def _resolution_key(resolution):
+    return "%.6f" % float(resolution)
+
+
+def _cached_comparison(cache, graph, assignment, resolution):
+    """Benchmark every community method once per (dataset, resolution).
+
+    Greedy modularity alone costs seconds and all four partitions are
+    deterministic, so the table is stored next to the graph and reused by later
+    runs in the same process.
+    """
+    store = cache.setdefault("comparison", {})
+    key = _resolution_key(resolution)
+    if key in store:
+        progress.say("community comparison for resolution %s reused from cache" % key)
+        return store[key]
+    comparison = {}
+    nodes = list(graph.nodes())
+    for name in community.METHODS:
+        with progress.Stage(
+            "comparison - %s" % name,
+            lambda method=name: "comparison - %s done" % method,
+        ):
+            try:
+                candidate = community.detect(graph, name, resolution=resolution)
+            except Exception as exc:  # one failing method must not break a run
+                comparison[name] = {"error": "%s: %s" % (type(exc).__name__, exc)}
+                continue
+            agreement = evaluate.partition_agreement(
+                assignment, candidate["assignment"], nodes
+            )
+            metrics = evaluate.label_metrics(
+                [assignment.get(node, -1) for node in nodes],
+                [candidate["assignment"].get(node, -1) for node in nodes],
+            )
+            comparison[name] = {
+                "num_communities": candidate["num_communities"],
+                "modularity": round(community.modularity(graph, candidate["assignment"]), 4),
+                "ari": round(agreement["ari"], 4),
+                "nmi": round(agreement["nmi"], 4),
+                "precision": round(metrics["precision"], 4),
+                "recall": round(metrics["recall"], 4),
+                "f1": round(metrics["f1"], 4),
+                "sampled_subgraph": bool(candidate.get("sampled_subgraph", False)),
+                "subgraph_nodes": candidate.get("subgraph_nodes"),
+            }
+    store[key] = comparison
+    return comparison
+
+
+def _cached_baseline(cache, graph, top):
+    """Top-k degree and closeness rankings, computed once per (dataset, top).
+
+    Exact closeness centrality is O(n*m), which makes it one of the slowest
+    steps of a run, so it is reused instead of recomputed.
+    """
+    store = cache.setdefault("baselines", {})
+    key = int(top)
+    if key not in store:
+        with progress.Stage(
+            "influence baselines - top-%d by degree and by closeness" % key,
+            "closeness and degree baselines ready",
+        ):
+            degree_top, _ = influence.degree_baseline(graph, top=key)
+            closeness_top, _ = influence.closeness_baseline(graph, top=key)
+        store[key] = {"degree": degree_top, "closeness": closeness_top}
+    else:
+        progress.say("top-%d influence baselines reused from cache" % key)
+    return store[key]
+
+
+def _cached_forest(cache, features, kind, contamination, variant=""):
+    """Isolation Forest fits are deterministic, so each setting is fitted once."""
+    store = cache.setdefault("forest", {})
+    key = (kind, round(float(contamination), 6), variant)
+    if key not in store:
+        with progress.Stage(
+            "module 2 - Isolation Forest over %s features" % kind,
+            lambda: "Isolation Forest ready (%s, contamination %.3f)"
+            % (kind, contamination),
+        ):
+            store[key] = anomaly.isolation_forest(features, contamination=contamination)
+    else:
+        progress.say("Isolation Forest fit for %s features reused from cache" % kind)
+    return store[key]
 
 
 def _json_safe(value):
@@ -88,7 +192,8 @@ def load_network(dataset=None):
     return entry
 
 
-def _metrics_rows(graph, comparison, anomalous_nodes, reference_nodes, node_scores, reference, per_community):
+def _metrics_rows(cache, graph, comparison, anomalous_nodes, reference_nodes, node_scores,
+                  reference, per_community):
     """doc 5.2.5 - one row per method, per module."""
     rows = []
     for name, entry in comparison.items():
@@ -138,8 +243,8 @@ def _metrics_rows(graph, comparison, anomalous_nodes, reference_nodes, node_scor
         entry["influential_user"] for entry in per_community if entry["influential_user"]
     }
     k = max(len(leaders), 1)
-    degree_top, _ = influence.degree_baseline(graph, top=k)
-    closeness_top, _ = influence.closeness_baseline(graph, top=k)
+    baselines = _cached_baseline(cache, graph, k)
+    degree_top, closeness_top = baselines["degree"], baselines["closeness"]
     rows.append(
         evaluate.row(
             "Influential users",
@@ -176,54 +281,42 @@ def run_claid(make_plots=True, **overrides):
     params.update({key: value for key, value in overrides.items() if value is not None})
     started = time.time()
     config.ensure_directories()
+    progress.say("run start - a full pass takes roughly half a minute")
 
-    cache = load_network(params["dataset"])
+    with progress.Stage(
+        "load the dataset, build the graph and extract node features",
+        lambda: "graph ready: %s nodes, %s edges"
+        % ("{:,}".format(cache["graph"].number_of_nodes()),
+           "{:,}".format(cache["graph"].number_of_edges())),
+    ):
+        cache = load_network(params["dataset"])
     graph, frame, features = cache["graph"], cache["frame"], cache["features"]
 
     # ---- module 1: community detection (doc 4.5) -------------------------- #
-    primary = community.detect(
-        graph, params["community_method"], resolution=params["resolution"]
-    )
-    assignment = primary["assignment"]
-    modularity = community.modularity(graph, assignment)
-    described = community.describe(graph, assignment)
+    with progress.Stage(
+        "module 1 - community detection (%s)" % params["community_method"],
+        lambda: "module 1 done: %d communities, modularity %.4f"
+        % (primary["num_communities"], modularity),
+    ):
+        primary = community.detect(
+            graph, params["community_method"], resolution=params["resolution"]
+        )
+        assignment = primary["assignment"]
+        modularity = community.modularity(graph, assignment)
+        described = community.describe(graph, assignment)
 
-    comparison = {}
-    nodes = list(graph.nodes())
-    for name in community.METHODS:
-        try:
-            candidate = community.detect(
-                graph, name, resolution=params["resolution"]
-            )
-        except Exception as exc:  # one failing method must not break a run
-            comparison[name] = {"error": "%s: %s" % (type(exc).__name__, exc)}
-            continue
-        agreement = evaluate.partition_agreement(
-            assignment, candidate["assignment"], nodes
-        )
-        metrics = evaluate.label_metrics(
-            [assignment.get(node, -1) for node in nodes],
-            [candidate["assignment"].get(node, -1) for node in nodes],
-        )
-        comparison[name] = {
-            "num_communities": candidate["num_communities"],
-            "modularity": round(community.modularity(graph, candidate["assignment"]), 4),
-            "ari": round(agreement["ari"], 4),
-            "nmi": round(agreement["nmi"], 4),
-            "precision": round(metrics["precision"], 4),
-            "recall": round(metrics["recall"], 4),
-            "f1": round(metrics["f1"], 4),
-            "sampled_subgraph": bool(candidate.get("sampled_subgraph", False)),
-            "subgraph_nodes": candidate.get("subgraph_nodes"),
-        }
+    comparison = _cached_comparison(cache, graph, assignment, params["resolution"])
 
     # ---- module 2: anomaly detection (doc 4.6) ---------------------------- #
-    node_scores = anomaly.isolation_forest(
-        features, contamination=params["contamination"]
-    )
+    node_scores = _cached_forest(cache, features, "node", params["contamination"])
     community_matrix = anomaly.community_features(features, assignment)
-    community_scores = anomaly.isolation_forest(
-        community_matrix, contamination=params["community_contamination"]
+    community_scores = _cached_forest(
+        cache,
+        community_matrix,
+        "community",
+        params["community_contamination"],
+        variant="%s@%s"
+        % (params["community_method"], _resolution_key(params["resolution"])),
     )
     anomalous_nodes = {
         node for node in node_scores.index if bool(node_scores.at[node, "is_anomaly"])
@@ -250,26 +343,37 @@ def run_claid(make_plots=True, **overrides):
     ]
 
     # ---- module 3: influential users (doc 4.7) ---------------------------- #
-    per_community, excluded = influence.influencers(
-        graph, assignment, anomalous_communities, top=params["top_influencers"]
-    )
-    top_users = influence.ranked_users(graph, cache["betweenness"], top=25)
+    with progress.Stage(
+        "module 3 - betweenness centrality inside each community",
+        lambda: "module 3 done: %d influencers, %d anomalous communities excluded"
+        % (len(per_community), len(excluded)),
+    ):
+        per_community, excluded = influence.influencers(
+            graph, assignment, anomalous_communities, top=params["top_influencers"]
+        )
+        top_users = influence.ranked_users(graph, cache["betweenness"], top=25)
 
     # ---- doc 5.2.4: communities interacting with the source node ---------- #
-    focus = _focus(
-        graph,
-        assignment,
-        params["source"],
-        anomalous_nodes,
-        per_community,
-        excluded_communities={entry["community"] for entry in excluded},
-    )
+    with progress.Stage(
+        "doc 5.2.4 - communities interacting with the source node",
+        lambda: "focus ready: source '%s' touches %d communities"
+        % (focus["source"], len(focus["communities"])),
+    ):
+        focus = _focus(
+            graph,
+            assignment,
+            params["source"],
+            anomalous_nodes,
+            per_community,
+            excluded_communities={entry["community"] for entry in excluded},
+        )
 
     # ---- doc 5.2.5: evaluation metrics ------------------------------------ #
-    rows = _metrics_rows(
-        graph, comparison, anomalous_nodes, set(reference["anomalies"]),
-        node_scores, reference, per_community,
-    )
+    with progress.Stage("doc 5.2.5 - precision, recall and F1 per method"):
+        rows = _metrics_rows(
+            cache, graph, comparison, anomalous_nodes, set(reference["anomalies"]),
+            node_scores, reference, per_community,
+        )
 
     # ---- one-glance counters (feed the dashboard figure and the web KPIs) -- #
     counts = {
@@ -286,7 +390,7 @@ def run_claid(make_plots=True, **overrides):
     warnings = []
     plot_files = {}
     if make_plots:
-        for label, factory in (
+        figure_jobs = (
             ("overview", lambda: plots.plot_overview(counts, comparison, run_dir)),
             ("communities", lambda: plots.plot_communities(graph, assignment, run_dir)),
             ("distributions", lambda: plots.plot_distributions(graph, assignment, run_dir)),
@@ -299,9 +403,12 @@ def run_claid(make_plots=True, **overrides):
                 top_users, assignment, run_dir)),
             ("focus", lambda: plots.plot_focus(graph, assignment, focus["source"], focus, run_dir)),
             ("metrics", lambda: plots.plot_metrics(rows, run_dir)),
-        ):
+        )
+        progress.say("rendering %d figures into %s" % (len(figure_jobs), run_dir))
+        for label, factory in figure_jobs:
             try:
-                plot_files[label] = factory()
+                with progress.Stage("figure %s.png" % label):
+                    plot_files[label] = factory()
             except Exception as exc:  # a plotting problem must not lose the analysis
                 plot_files[label] = None
                 warnings.append("%s plot failed: %s: %s" % (label, type(exc).__name__, exc))
@@ -358,6 +465,11 @@ def run_claid(make_plots=True, **overrides):
     }
     with open(run_dir / "result.json", "w", encoding="utf-8") as handle:
         json.dump(_json_safe(result), handle, indent=2)
+    progress.say(
+        "run %s stored in %s after %.1fs - %d communities, %d anomalies, %d influencers"
+        % (run_id, run_dir, result["duration_seconds"], primary["num_communities"],
+           len(anomalous_nodes), len(per_community))
+    )
     return result
 
 

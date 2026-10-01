@@ -65,7 +65,13 @@ def check(name, condition, detail=""):
 def main():
     import app as webapp
     import claid
-    from claid import config, pipeline
+    from claid import config, pipeline, progress
+
+    # The pipeline reports each stage; this test asserts on those lines, so it
+    # captures them into a sink and keeps stderr quiet to stay readable.
+    observed = []
+    progress.add_sink(observed.append)
+    os.environ["CLAID_QUIET"] = "1"
 
     check("claid imports", claid.__version__ == "1.0.0", "version %s" % claid.__version__)
 
@@ -167,6 +173,11 @@ def main():
     icon = client.get("/static/img/favicon.svg")
     check("favicon served", icon.status_code == 200 and b"<svg" in icon.data)
 
+    script = client.get("/static/js/app.js")
+    check("run-progress script served",
+          script.status_code == 200 and b"run-status" in script.data,
+          "%d bytes" % len(script.data))
+
     headers = client.get("/").headers
     check("security headers",
           headers.get("X-Content-Type-Options") == "nosniff"
@@ -190,6 +201,37 @@ def main():
           os.path.exists(os.path.join(ROOT, ".env.example")))
     check(".env stays out of git",
           ".env" in open(os.path.join(ROOT, ".gitignore"), encoding="utf-8").read())
+
+    # --- progress reporting and caching ----------------------------------- #
+    repeat = pipeline.run_claid(source="bestof", make_plots=False)
+
+    comparison = result["community"]["comparison"]
+    check("every community method returned a partition",
+          len(comparison) == len(config.COMMUNITY_COMPARISON_METHODS)
+          and all("error" not in entry for entry in comparison.values()),
+          "methods: " + ", ".join(sorted(comparison)))
+
+    check("the pipeline reports its stages",
+          any("module 1" in line for line in observed)
+          and any("module 3" in line for line in observed),
+          "%d progress lines (%s ...)" % (len(observed), observed[0] if observed else ""))
+
+    check("a repeat run reuses the cached work",
+          any("reused from cache" in line for line in observed)
+          and repeat["duration_seconds"] < result["duration_seconds"] * 0.6,
+          "%.1fs vs %.1fs for the first run"
+          % (repeat["duration_seconds"], result["duration_seconds"]))
+
+    os.environ.pop("CLAID_QUIET", None)
+    check("stage progress is on by default and can be silenced",
+          not progress.quiet() and bool(observed),
+          "CLAID_QUIET silences stderr; registered sinks still receive the lines")
+
+    stats = pipeline.cache_stats()
+    check("deterministic stages are memoised per dataset",
+          bool(stats["features"] and stats["comparison"] and stats["baselines"]),
+          "comparison %s | baselines %s | forest %s"
+          % (stats["comparison"], stats["baselines"], stats["forest"]))
 
     failures = [name for name, ok, _ in RESULTS if not ok]
     print("\n%d checks, %d failed" % (len(RESULTS), len(failures)))
