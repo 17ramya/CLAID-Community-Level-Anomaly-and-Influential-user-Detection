@@ -7,17 +7,77 @@ Anomaly and Influencer Detection", doc sections 4.5 - 4.7).
 Nothing secret is stored in this file. Every value that depends on the machine
 or on a deployment is read from the environment, so no key, token or password
 ever has to be committed - see ``.env.example`` and :func:`load_environment`.
+
+The writable state (the extracted dataset and one folder per run) normally lives
+in the repository as ``data/`` and ``var/``. A host that mounts the deployed tree
+read-only - Vercel, AWS Lambda, Cloud Run - gets ``/tmp`` instead, so the state
+root is probed at import time and moved there automatically; ``CLAID_STATE_DIR``
+picks the location by hand (point it at a volume to keep runs between restarts).
 """
 from __future__ import annotations
 
 import os
 import secrets
+import tempfile
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-VAR_DIR = os.path.join(PROJECT_ROOT, "var")
+#: Move the writable state (dataset cache + runs) with this variable.
+STATE_ENV_VAR = "CLAID_STATE_DIR"
+
+
+def _is_writable(path):
+    """True when ``path`` can be created and a probe file written inside it."""
+    probe = os.path.join(path, ".claid-write-probe")
+    try:
+        os.makedirs(path, exist_ok=True)
+        with open(probe, "w", encoding="utf-8") as handle:
+            handle.write("ok")
+    except OSError:
+        return False
+    try:
+        os.remove(probe)
+    except OSError:  # the probe was written, so the directory is usable
+        pass
+    return True
+
+
+def _temporary_state_root():
+    """``<tmp>/claid`` - the one writable place a serverless host offers."""
+    return os.path.join(tempfile.gettempdir(), "claid")
+
+
+def _resolve_state_root():
+    """Pick the directory that holds ``data/`` and ``var/``.
+
+    ``CLAID_STATE_DIR`` wins when it is set (a volume keeps runs across
+    restarts); without it the repository root is used as long as it accepts a
+    write, which leaves the local workflow untouched.  When neither works the
+    state moves to the system temp directory, which is what makes the application
+    run on a read-only serverless filesystem.
+    """
+    override = os.environ.get(STATE_ENV_VAR, "").strip()
+    candidates = ([os.path.abspath(override)] if override else [PROJECT_ROOT])
+    fallback = _temporary_state_root()
+    if fallback not in candidates:
+        candidates.append(fallback)
+    for candidate in candidates:
+        if _is_writable(os.path.join(candidate, "var")):
+            return candidate
+    return candidates[-1]  # nothing is writable - fail loudly on the first write
+
+
+STATE_ROOT = _resolve_state_root()
+DATA_DIR = os.path.join(STATE_ROOT, "data")
+VAR_DIR = os.path.join(STATE_ROOT, "var")
 RUNS_DIR = os.path.join(VAR_DIR, "runs")
+#: matplotlib's config/font cache - kept writable so a read-only image still draws
+CACHE_DIR = os.path.join(VAR_DIR, "cache")
+os.environ.setdefault("MPLCONFIGDIR", CACHE_DIR)
+try:  # matplotlib only builds its font cache when the directory already exists
+    os.makedirs(CACHE_DIR, exist_ok=True)
+except OSError:  # a read-only mount: matplotlib will warn and fall back on its own
+    pass
 
 #: Flask assets live inside the package: <package>/web/{templates,static}.
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -126,7 +186,33 @@ def web_port():
 
 def ensure_directories():
     """Create the data/var directories used by the pipeline."""
-    for path in (DATA_DIR, VAR_DIR, RUNS_DIR):
+    for path in (DATA_DIR, VAR_DIR, RUNS_DIR, CACHE_DIR):
         os.makedirs(path, exist_ok=True)
-    return {"data": DATA_DIR, "var": VAR_DIR, "runs": RUNS_DIR}
+    return {"data": DATA_DIR, "var": VAR_DIR, "runs": RUNS_DIR, "cache": CACHE_DIR}
+
+
+def is_ephemeral():
+    """True when the state lives in the system temp directory.
+
+    That is what happens on a serverless host: the writes succeed, but the host
+    may hand the next request to a fresh instance, so the run folders (and the
+    extracted dataset) do not survive. Callers use this to say so instead of
+    letting a missing run look like a bug.
+    """
+    temp = os.path.normcase(os.path.abspath(tempfile.gettempdir()))
+    root = os.path.normcase(os.path.abspath(STATE_ROOT))
+    return root == temp or root.startswith(temp + os.sep)
+
+
+def state_summary():
+    """Where the writable state lives - printed at startup and shown in the UI."""
+    return {
+        "root": STATE_ROOT,
+        "runs": RUNS_DIR,
+        "dataset": DATA_DIR,
+        "in_project": os.path.normcase(os.path.abspath(STATE_ROOT))
+        == os.path.normcase(os.path.abspath(PROJECT_ROOT)),
+        "ephemeral": is_ephemeral(),
+        "from_env": bool(os.environ.get(STATE_ENV_VAR, "").strip()),
+    }
 

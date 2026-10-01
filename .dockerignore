@@ -1,0 +1,17 @@
+# Build context for deploy/Dockerfile (docker build -f deploy/Dockerfile .).
+.git
+.gitignore
+.github
+__pycache__
+**/__pycache__
+*.py[cod]
+var
+data
+exploratory/figures
+_analysis
+*.log
+venv
+.venv
+.env
+.env.*
+!.env.example

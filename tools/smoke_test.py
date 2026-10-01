@@ -10,9 +10,13 @@ if anything fails.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
@@ -60,6 +64,90 @@ def check(name, condition, detail=""):
     print("%-4s %s%s" % ("OK" if condition else "FAIL", name,
                          (" - " + detail) if detail else ""))
     return bool(condition)
+
+
+#: Run in a fresh interpreter: the writable state has to follow CLAID_STATE_DIR.
+CHILD_STATE = """
+import json, os, sys
+sys.path.insert(0, os.path.join(__ROOT__, "src"))
+from claid import config
+
+dirs = config.ensure_directories()
+print(json.dumps({
+    "root": config.STATE_ROOT,
+    "runs": config.RUNS_DIR,
+    "data": config.DATA_DIR,
+    "ephemeral": config.is_ephemeral(),
+    "in_project": config.state_summary()["in_project"],
+    "dirs_exist": all(os.path.isdir(path) for path in dirs.values()),
+}))
+"""
+
+#: The deployed shape: a finished run moved outside the project is still served.
+CHILD_APP = """
+import json, os, shutil, sys
+sys.path.insert(0, os.path.join(__ROOT__, "src"))
+sys.path.insert(0, __ROOT__)
+
+import app as webapp
+from claid import config
+
+run_id = os.environ["CLAID_SMOKE_RUN_ID"]
+config.ensure_directories()
+shutil.copytree(os.environ["CLAID_SMOKE_RUN_DIR"], os.path.join(config.RUNS_DIR, run_id))
+
+client = webapp.app.test_client()
+dashboard = client.get("/")
+page = client.get("/results/%s" % run_id)
+figure = client.get("/runs/%s/communities.png" % run_id)
+stored = client.get("/api/runs").get_json() or {}
+print(json.dumps({
+    "state": config.STATE_ROOT,
+    "data": config.DATA_DIR,
+    "dashboard": dashboard.status_code,
+    "storage_note": "temporary directory" in dashboard.get_data(as_text=True),
+    "results": page.status_code,
+    "figure": figure.status_code,
+    "api_runs": len(stored.get("runs", [])),
+    "dataset": os.path.isfile(os.path.join(config.DATA_DIR, "Dataset(1).csv")),
+    "outside_project": not config.state_summary()["in_project"],
+}))
+"""
+
+
+def run_child(script, env):
+    """Run ``script`` in a fresh interpreter and return the JSON it printed."""
+    folder = tempfile.mkdtemp(prefix="claid-child-")
+    try:
+        path = os.path.join(folder, "child.py")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(script.replace("__ROOT__", "%r" % ROOT))
+        done = subprocess.run([sys.executable, path], env=env, cwd=ROOT,
+                              capture_output=True, text=True, timeout=900)
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    for line in reversed((done.stdout or "").splitlines()):
+        if line.strip().startswith("{"):
+            try:
+                return json.loads(line), done.stdout + done.stderr
+            except ValueError:
+                break
+    return {}, done.stdout + done.stderr
+
+
+def child_env(state_dir):
+    """Environment for a child process whose writable state lives elsewhere."""
+    env = dict(os.environ)
+    env["CLAID_STATE_DIR"] = state_dir
+    env["CLAID_QUIET"] = "1"
+    env.pop("MPLCONFIGDIR", None)  # let the child pick its own cache directory
+    return env
+
+
+def last_line(text):
+    """The child's last output line - the traceback when it died."""
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    return lines[-1][:120] if lines else "the child process printed nothing"
 
 
 def main():
@@ -232,6 +320,52 @@ def main():
           bool(stats["features"] and stats["comparison"] and stats["baselines"]),
           "comparison %s | baselines %s | forest %s"
           % (stats["comparison"], stats["baselines"], stats["forest"]))
+
+    # --- deployment: the writable state can live outside the project -------- #
+    # Serverless hosts (Vercel, Lambda, Cloud Run) mount the deployed tree
+    # read-only and offer /tmp, so the writes have to follow CLAID_STATE_DIR and
+    # fall back on their own when even that is impossible.
+    state_dir = os.path.join(tempfile.mkdtemp(prefix="claid-state-"), "state")
+    moved, moved_log = run_child(CHILD_STATE, child_env(state_dir))
+    check("CLAID_STATE_DIR moves the writable state",
+          os.path.normcase(os.path.abspath(moved.get("root", "")))
+          == os.path.normcase(os.path.abspath(state_dir))
+          and moved.get("dirs_exist") is True and moved.get("in_project") is False,
+          ("root %s, data/var/runs created" % moved["root"]) if moved
+          else last_line(moved_log))
+
+    blocked_file = os.path.join(tempfile.mkdtemp(prefix="claid-blocked-"), "not-a-directory")
+    with open(blocked_file, "w", encoding="utf-8") as handle:
+        handle.write("a file cannot hold a directory")
+    blocked, blocked_log = run_child(CHILD_STATE, child_env(os.path.join(blocked_file, "state")))
+    temp_root = os.path.join(tempfile.gettempdir(), "claid")
+    check("an unwritable state directory falls back to the temp directory",
+          os.path.normcase(os.path.abspath(blocked.get("root", "")))
+          == os.path.normcase(os.path.abspath(temp_root))
+          and blocked.get("ephemeral") is True,
+          ("root %s (ephemeral)" % blocked["root"]) if blocked else last_line(blocked_log))
+
+    env = child_env(state_dir)
+    env["CLAID_SMOKE_RUN_DIR"] = os.path.join(config.RUNS_DIR, run_id)
+    env["CLAID_SMOKE_RUN_ID"] = run_id
+    served, served_log = run_child(CHILD_APP, env)
+    check("the dashboard works with the state outside the project",
+          served.get("dashboard") == 200 and served.get("storage_note") is True
+          and served.get("outside_project") is True,
+          ("state %s, note shown" % served["state"]) if served else last_line(served_log))
+    check("a run stored outside the project is served",
+          served.get("results") == 200 and served.get("figure") == 200
+          and served.get("api_runs", 0) >= 1,
+          ("results %s, figure %s, %s run(s) listed"
+           % (served.get("results"), served.get("figure"), served.get("api_runs")))
+          if served else last_line(served_log))
+    check("the dataset is extracted into the relocated data directory",
+          served.get("dataset") is True,
+          served.get("data", "") if served else last_line(served_log))
+
+    # the deployment checks wrote into the system temp directory - take them back
+    for folder in (os.path.dirname(state_dir), os.path.dirname(blocked_file), temp_root):
+        shutil.rmtree(folder, ignore_errors=True)
 
     failures = [name for name, ok, _ in RESULTS if not ok]
     print("\n%d checks, %d failed" % (len(RESULTS), len(failures)))

@@ -17,6 +17,7 @@ Every run is stored as ``var/runs/<run_id>/result.json`` plus PNG figures.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -39,6 +40,9 @@ DEFAULT_PARAMS = {
 }
 
 _CACHE = {}
+#: pyplot keeps its figures in module-level state and one deployed instance can
+#: serve two runs at once (Vercel Fluid compute, gunicorn threads): one renderer.
+_PLOT_LOCK = threading.Lock()
 
 
 def cache_stats(dataset=None):
@@ -405,13 +409,15 @@ def run_claid(make_plots=True, **overrides):
             ("metrics", lambda: plots.plot_metrics(rows, run_dir)),
         )
         progress.say("rendering %d figures into %s" % (len(figure_jobs), run_dir))
-        for label, factory in figure_jobs:
-            try:
-                with progress.Stage("figure %s.png" % label):
-                    plot_files[label] = factory()
-            except Exception as exc:  # a plotting problem must not lose the analysis
-                plot_files[label] = None
-                warnings.append("%s plot failed: %s: %s" % (label, type(exc).__name__, exc))
+        with _PLOT_LOCK:
+            for label, factory in figure_jobs:
+                try:
+                    with progress.Stage("figure %s.png" % label):
+                        plot_files[label] = factory()
+                except Exception as exc:  # a plotting problem must not lose the analysis
+                    plot_files[label] = None
+                    warnings.append("%s plot failed: %s: %s"
+                                    % (label, type(exc).__name__, exc))
 
     result = {
         "run_id": run_id,

@@ -73,6 +73,7 @@ git-ignored `.env` file:
 | `CLAID_HOST` | interface to bind | `127.0.0.1` |
 | `CLAID_PORT` | port to bind | `5000` |
 | `CLAID_DEBUG` | Flask debugger, local use only | off |
+| `CLAID_STATE_DIR` | where `data/` and `var/` are written | the repository |
 
 ```bash
 cp .env.example .env
@@ -87,6 +88,49 @@ and a 64 KB request-body cap, and it refuses to advertise the debugger on a publ
 interface. `tools/smoke_test.py` scans the tree and fails if a credential-shaped
 assignment is ever committed.
 
+## Deploying
+
+The application writes exactly two things: the dataset it extracts from the
+shipped zip (`data/`) and one folder per run (`var/runs/`). Everything else is
+read-only, so a deployment only has to decide where those writes may go.
+
+| host | what works | where the state goes |
+| --- | --- | --- |
+| a host that keeps a disk - Render, Railway, Fly.io, Cloud Run, a VPS, `deploy/Dockerfile` | the full run, persistent history | `CLAID_STATE_DIR` on the mounted volume |
+| Vercel, AWS Lambda and other serverless filesystems | the app runs; runs are temporary | automatic fallback to `<tmp>/claid` |
+
+### Vercel
+
+`app.py` is a zero-configuration Flask entrypoint - Vercel picks the framework
+preset from `requirements.txt` and bundles the whole repository, so no
+`vercel.json` is needed - and one run sits comfortably inside the Hobby function
+budget (300 s, 2 GB).
+
+Serverless functions mount the deployed tree **read-only** and offer `/tmp` as the
+only writable place. `src/claid/config.py` probes this at import time and moves
+`data/` and `var/` to `<tmp>/claid`, so the dashboard, a run and its figures all
+work with no setting to change. Two consequences worth knowing:
+
+* the extracted dataset and the runs live in that instance's temporary directory.
+  Open a run right after it finishes; a URL served by a fresh instance answers
+  with a short explanation instead of a bare error, and the dashboard carries the
+  same note while the state is outside the project;
+* set `CLAID_SECRET_KEY` in the project's environment variables, or every instance
+  will sign its cookies with a key of its own.
+
+### A host with a disk (keeps the run history)
+
+```bash
+docker build -f deploy/Dockerfile -t claid .
+docker run -p 8000:8000 -v claid-data:/data claid        # http://127.0.0.1:8000
+```
+
+`deploy/Dockerfile` installs the requirements plus gunicorn, runs one worker (the
+pipeline memoises the graph, the §4.5 comparison and the Isolation Forest fits per
+process, so a single worker keeps that cache warm for every request) and points
+`CLAID_STATE_DIR` at the `/data` volume, so runs and the extracted dataset survive
+restarts. On Render, Railway or Fly.io, give the same path as the Dockerfile.
+
 ## Repository layout
 
 ```
@@ -94,6 +138,8 @@ assignment is ever committed.
 ├── app.py                          Flask front end: routes, JSON API, CSV export
 ├── run_claid.py                    zero-setup CLI entry point (puts src/ on the path)
 ├── requirements.txt
+├── deploy/Dockerfile
+    container image for a host that keeps a disk (see "Deploying")
 ├── .env.example                    documented environment variables (no secrets)
 ├── src/claid/                      the framework, importable as `claid`
 │   ├── config.py                   paths, algorithm defaults (§4.5–§4.7), environment

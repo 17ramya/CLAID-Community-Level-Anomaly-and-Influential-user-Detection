@@ -156,9 +156,16 @@
     <span class="section-index">4</span>
     <div>
       <h2>Recent runs</h2>
-      <p class="section-note">Kept on disk under <code>var/runs/</code> - open one to revisit its figures and tables.</p>
+      <p class="section-note">Kept on disk under <code>{{ storage.runs_label }}</code> - open one to revisit its figures and tables.</p>
     </div>
   </header>
+  {% if storage.ephemeral %}
+  <p class="storage-note">
+    This deployment writes to the temporary directory <code>{{ storage.root }}</code>,
+    so the extracted dataset and every run live only while the host keeps this
+    instance - open a run as soon as it finishes.
+  </p>
+  {% endif %}
   {% if runs %}
   <div class="table-scroll">
     <table class="data">

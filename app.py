@@ -15,6 +15,11 @@ Routes
 ``/api/runs``                JSON list of stored runs
 ``/download/<run_id>/<t>.csv``  CSV export of a result table
 ``/about``                   module -> report-section map, tooling, dataset notes
+
+The writable state - the extracted dataset and one folder per run - lives in
+``var/`` beside the repository. A host that mounts the deployed tree read-only
+(Vercel, Lambda, Cloud Run) gets a temporary directory instead: see
+``CLAID_STATE_DIR`` in :mod:`claid.config`.
 """
 from __future__ import annotations
 
@@ -147,6 +152,7 @@ def dashboard():
             "top_influencers": config.TOP_INFLUENCERS,
         },
         runs=pipeline.list_runs(limit=8),
+        storage=_storage_view(),
         active="dashboard",
     )
 
@@ -167,11 +173,30 @@ def analyze():
     return redirect(url_for("results", run_id=result["run_id"]))
 
 
+def _storage_view():
+    """How the dashboard should describe where runs are kept."""
+    state = config.state_summary()
+    return {
+        "root": state["root"],
+        "ephemeral": state["ephemeral"],
+        "runs_label": "var/runs/" if state["in_project"] else state["runs"],
+    }
+
+
+def _missing_run_message(run_id):
+    """404 text for a run that is not stored (or no longer stored)."""
+    if config.is_ephemeral():
+        return ("run %s is not on this instance - this deployment keeps the runs "
+                "in a temporary directory, so a finished run has to be opened right "
+                "away" % run_id)
+    return "unknown run %s" % run_id
+
+
 @app.route("/results/<run_id>")
 def results(run_id):
     result = pipeline.load_run(run_id)
     if result is None:
-        abort(404, "unknown run %s" % run_id)
+        abort(404, _missing_run_message(run_id))
     return render_template("results.html", result=result, active="results")
 
 
@@ -182,7 +207,7 @@ def run_figure(run_id, figure):
         abort(404)
     directory = os.path.join(config.RUNS_DIR, run_id)
     if not os.path.isdir(directory):
-        abort(404, "unknown run %s" % run_id)
+        abort(404, _missing_run_message(run_id))
     return send_from_directory(directory, figure, mimetype="image/png")
 
 
@@ -253,7 +278,7 @@ CSV_BUILDERS = {
 def download(run_id, table):
     result = pipeline.load_run(run_id)
     if result is None:
-        abort(404, "unknown run %s" % run_id)
+        abort(404, _missing_run_message(run_id))
     builder = CSV_BUILDERS.get(table)
     if builder is None:
         abort(404, "unknown table %s" % table)
@@ -304,6 +329,12 @@ def main(argv=None):
                         help="Flask debugger (CLAID_DEBUG) - never on a public interface")
     args = parser.parse_args(argv)
     config.ensure_directories()
+    state = config.state_summary()
+    print("CLAID state directory: %s" % state["root"])
+    if state["ephemeral"]:
+        print("note: the project tree is not writable, so the dataset cache and the "
+              "runs go to a temporary directory and may not survive a restart "
+              "(set %s to choose the location)." % config.STATE_ENV_VAR)
     if args.debug and args.host not in ("127.0.0.1", "localhost"):
         print("warning: the debugger is on while binding %s - do not expose this." % args.host)
     if not os.environ.get("CLAID_SECRET_KEY"):
