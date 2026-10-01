@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}CLAID{% endblock %} | CLAID framework</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <a class="brand" href="{{ url_for('dashboard') }}">
+      <span class="brand-mark">C</span>
+      <span>
+        <strong>CLAID</strong>
+        <small>Community-Level Anomaly &amp; Influential-user Detection</small>
+      </span>
+    </a>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('about') }}">About</a>
+      <a href="{{ url_for('api_runs') }}">API</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="wrap footer">
+  <p>CLAID framework &middot; implementations of project report chapters 4&ndash;5
+     (&sect;4.5 Louvain modularity, &sect;4.6 Isolation Forest, &sect;4.7 betweenness centrality, &sect;5.2.5 evaluation).</p>
+</footer>
+</body>
+</html>

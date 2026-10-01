@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Extracted dataset (re-created automatically from the committed zip)
+data/
+
+# Framework output: JSON results and PNG figures per run
+var/
+
+# Figures written by the converted notebook
+notebook_to_py/output/
+
+# Scratch / analysis output
+_analysis/
+*.log
